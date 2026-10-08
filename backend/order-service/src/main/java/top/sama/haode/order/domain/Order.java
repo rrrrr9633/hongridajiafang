@@ -28,8 +28,14 @@ public class Order {
     @Column(name = "product_id", nullable = false, length = 64)
     private String productId;
 
+    @Column(name = "product_type_id", length = 64)
+    private String productTypeId;
+
     @Column(name = "product_name", nullable = false, length = 128)
     private String productName;
+
+    @Column(name = "product_type_name", length = 64)
+    private String productTypeName;
 
     @Column(name = "product_subtitle", nullable = false, length = 255)
     private String productSubtitle;
@@ -53,16 +59,18 @@ public class Order {
     protected Order() {
     }
 
-    public Order(String userId, Product product, int quantity) {
-        this(userId, null, product, quantity);
+    public Order(String userId, Product product, ProductType type, int quantity) {
+        this(userId, null, product, type, quantity);
     }
 
-    public Order(String userId, UUID checkoutId, Product product, int quantity) {
+    public Order(String userId, UUID checkoutId, Product product, ProductType type, int quantity) {
         this.userId = userId;
         this.checkoutId = checkoutId;
         this.productId = product.getId();
+        this.productTypeId = type.getId();
         this.productName = product.getName();
-        this.productSubtitle = product.getSubtitle();
+        this.productTypeName = type.getName();
+        this.productSubtitle = type.getIntro() == null || type.getIntro().isBlank() ? product.getSubtitle() : type.getIntro();
         this.quantity = quantity;
         this.amount = product.getPrice().multiply(BigDecimal.valueOf(quantity));
         this.status = OrderStatus.PENDING_PAYMENT;
@@ -86,8 +94,16 @@ public class Order {
         return productId;
     }
 
+    public String getProductTypeId() {
+        return productTypeId;
+    }
+
     public String getProductName() {
         return productName;
+    }
+
+    public String getProductTypeName() {
+        return productTypeName;
     }
 
     public String getProductSubtitle() {

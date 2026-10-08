@@ -12,7 +12,7 @@ spring:
             - id: order-service
               uri: ${ORDER_SERVICE_URL:http://127.0.0.1:8081}
               predicates:
-                - Path=/api/products,/api/products/**,/api/orders/**,/api/auth/**,/api/users/**,/api/reviews/**,/api/after-sales/**,/api/admin/**,/api/media/**
+                - Path=/api/products,/api/products/**,/api/orders/**,/api/auth/**,/api/users/**,/api/reviews/**,/api/after-sales/**,/api/admin/**,/api/media/**,/api/support,/api/support/**,/api/coupons,/api/coupons/**,/api/announcements,/api/announcements/**,/api/addresses,/api/addresses/**,/api/payments,/api/payments/**
               filters:
                 - StripPrefix=0
 

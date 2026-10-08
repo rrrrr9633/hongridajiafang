@@ -33,7 +33,10 @@ public class AdminOrderController {
 
     public record OrderResponse(UUID id, String status, String title) {
         static OrderResponse from(Order order) {
-            return new OrderResponse(order.getId(), order.getStatus().name(), order.getProductName());
+            return new OrderResponse(order.getId(), order.getStatus().name(),
+                    order.getProductTypeName() == null || order.getProductTypeName().isBlank()
+                            ? order.getProductName()
+                            : order.getProductName() + " · " + order.getProductTypeName());
         }
     }
 }

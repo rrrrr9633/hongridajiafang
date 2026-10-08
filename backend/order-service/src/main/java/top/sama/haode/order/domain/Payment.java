@@ -86,6 +86,15 @@ public class Payment {
         return transactionId;
     }
 
+    public void updateAmount(BigDecimal amount) {
+        if (amount == null || amount.signum() <= 0) throw new IllegalArgumentException("支付金额无效");
+        if (status == PaymentStatus.SUCCESS || status == PaymentStatus.CLOSED) {
+            throw new IllegalStateException("支付单当前状态不可改金额");
+        }
+        this.amount = amount;
+        this.updatedAt = Instant.now();
+    }
+
     public void beginPaying() {
         if (status == PaymentStatus.INITIATED) {
             status = PaymentStatus.PAYING;

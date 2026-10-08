@@ -6,6 +6,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestClient;
+import top.sama.haode.order.domain.InviteCodes;
 import top.sama.haode.order.domain.Session;
 import top.sama.haode.order.domain.User;
 import top.sama.haode.order.repository.SessionRepository;
@@ -74,7 +75,7 @@ public class WechatAuthService {
     private User upsertUser(String openid, String phone) {
         return userRepository.findByPhone(phone)
                 .map(existing -> existing.bindWechatOpenid(openid))
-                .orElseGet(() -> userRepository.save(new User(UUID.randomUUID().toString(), openid, phone)));
+                .orElseGet(() -> userRepository.save(new User(UUID.randomUUID().toString(), openid, phone, InviteCodes.random())));
     }
 
     private AuthSession issueSession(User user) {

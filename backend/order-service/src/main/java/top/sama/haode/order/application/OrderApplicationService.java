@@ -9,6 +9,7 @@ import top.sama.haode.order.domain.Order;
 import top.sama.haode.order.domain.OrderStatus;
 import top.sama.haode.order.domain.Payment;
 import top.sama.haode.order.domain.Product;
+import top.sama.haode.order.domain.ProductType;
 import top.sama.haode.order.domain.Review;
 import top.sama.haode.order.domain.ReviewStatus;
 import top.sama.haode.order.repository.AfterSaleRepository;
@@ -17,6 +18,7 @@ import top.sama.haode.order.repository.ReviewRepository;
 import top.sama.haode.order.repository.OrderRepository;
 import top.sama.haode.order.repository.PaymentRepository;
 import top.sama.haode.order.repository.ProductRepository;
+import top.sama.haode.order.repository.ProductTypeRepository;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -28,24 +30,33 @@ public class OrderApplicationService {
     private final OrderRepository orderRepository;
     private final PaymentRepository paymentRepository;
     private final ProductRepository productRepository;
+    private final ProductTypeRepository productTypeRepository;
     private final ReviewRepository reviewRepository;
     private final AfterSaleRepository afterSaleRepository;
     private final CheckoutRepository checkoutRepository;
+    private final CouponService couponService;
+    private final AddressService addressService;
 
     public OrderApplicationService(
             OrderRepository orderRepository,
             PaymentRepository paymentRepository,
             ProductRepository productRepository,
+            ProductTypeRepository productTypeRepository,
             ReviewRepository reviewRepository,
             AfterSaleRepository afterSaleRepository,
-            CheckoutRepository checkoutRepository
+            CheckoutRepository checkoutRepository,
+            CouponService couponService,
+            AddressService addressService
     ) {
         this.orderRepository = orderRepository;
         this.paymentRepository = paymentRepository;
         this.productRepository = productRepository;
+        this.productTypeRepository = productTypeRepository;
         this.reviewRepository = reviewRepository;
         this.afterSaleRepository = afterSaleRepository;
         this.checkoutRepository = checkoutRepository;
+        this.couponService = couponService;
+        this.addressService = addressService;
     }
 
     @Transactional(readOnly = true)
@@ -96,24 +107,28 @@ public class OrderApplicationService {
 
 
     @Transactional
-    public CheckoutResult createCheckout(String userId, List<CheckoutItem> items) {
+    public CheckoutResult createCheckout(String userId, List<CheckoutItem> items, UUID couponId) {
         if (items == null || items.isEmpty()) throw new IllegalArgumentException("购物车为空");
         UUID checkoutId = UUID.randomUUID();
         Checkout checkout = checkoutRepository.save(new Checkout(checkoutId, userId, java.math.BigDecimal.ONE));
         List<Order> orders = new java.util.ArrayList<>();
         java.math.BigDecimal total = java.math.BigDecimal.ZERO;
-        java.util.Set<String> productIds = new java.util.HashSet<>();
+        java.util.Set<String> typeKeys = new java.util.HashSet<>();
         for (CheckoutItem item : items) {
-            if (item.productId() == null || item.productId().isBlank() || !productIds.add(item.productId())) {
+            if (item.productId() == null || item.productId().isBlank()) {
                 throw new IllegalArgumentException("购物车商品无效或重复");
             }
             if (item.quantity() < 1 || item.quantity() > 99) throw new IllegalArgumentException("商品数量无效");
             Product product = productRepository.findByIdAndActiveTrue(item.productId())
                     .orElseThrow(() -> new IllegalArgumentException("商品不存在或已下架"));
+            ProductType type = resolveType(product.getId(), item.typeId());
+            if (!typeKeys.add(type.getId())) {
+                throw new IllegalArgumentException("购物车商品无效或重复");
+            }
             if (product.getPrice() == null || product.getPrice().signum() <= 0) {
                 throw new IllegalStateException("商品价格无效，暂不可结算");
             }
-            Order order = new Order(userId, checkoutId, product, item.quantity());
+            Order order = new Order(userId, checkoutId, product, type, item.quantity());
             orders.add(order);
             total = total.add(order.getAmount());
         }
@@ -121,15 +136,17 @@ public class OrderApplicationService {
         checkoutRepository.save(checkout);
         List<Order> savedOrders = orderRepository.saveAll(orders);
         paymentRepository.save(new Payment(checkoutId, total, true));
+        if (couponId != null) couponService.applyToCheckout(checkout, userId, couponId);
         return new CheckoutResult(checkout, savedOrders);
     }
 
-    public record CheckoutItem(String productId, int quantity) {}
+    public record CheckoutItem(String productId, String typeId, int quantity) {}
     public record CheckoutResult(Checkout checkout, List<Order> orders) {}
 
     private void expireCheckoutIfNeeded(Checkout checkout) {
         if (checkout.getStatus() != OrderStatus.PENDING_PAYMENT
                 || checkout.getCreatedAt().isAfter(Instant.now().minus(Duration.ofMinutes(5)))) return;
+        couponService.releaseCheckout(checkout);
         checkout.cancel();
         paymentRepository.findByCheckoutId(checkout.getId()).ifPresent(Payment::close);
         orderRepository.findByCheckoutIdOrderByCreatedAtAsc(checkout.getId()).forEach(order -> {
@@ -142,6 +159,10 @@ public class OrderApplicationService {
         Checkout checkout = checkoutRepository.findByIdAndUserId(checkoutId, userId)
                 .orElseThrow(() -> new IllegalArgumentException("Checkout not found: " + checkoutId));
         expireCheckoutIfNeeded(checkout);
+        if (checkout.getStatus() == OrderStatus.PENDING_PAYMENT && !checkout.hasReceiver()) {
+            var fallback = addressService.defaultAddress(userId);
+            if (fallback != null) checkout.bindAddress(fallback);
+        }
         return new CheckoutResult(checkout, orderRepository.findByCheckoutIdOrderByCreatedAtAsc(checkoutId));
     }
 
@@ -151,26 +172,59 @@ public class OrderApplicationService {
     }
 
     @Transactional
-    public void markCheckoutPaying(UUID checkoutId, String userId) {
+    public CheckoutResult applyCheckoutCoupon(
+            UUID checkoutId,
+            String userId,
+            UUID couponId,
+            List<CouponService.Selection> selections
+    ) {
+        CheckoutResult result = getCheckout(checkoutId, userId);
+        if (selections != null) couponService.applyToCheckout(result.checkout(), userId, selections);
+        else couponService.applyToCheckout(result.checkout(), userId, couponId);
+        return result;
+    }
+
+    @Transactional
+    public CheckoutResult bindCheckoutAddress(UUID checkoutId, String userId, UUID addressId) {
+        CheckoutResult result = getCheckout(checkoutId, userId);
+        result.checkout().bindAddress(addressService.require(userId, addressId));
+        return result;
+    }
+
+    @Transactional
+    public Checkout markCheckoutPaying(UUID checkoutId, String userId) {
         Checkout checkout = checkoutRepository.findByIdAndUserId(checkoutId, userId)
                 .orElseThrow(() -> new IllegalArgumentException("Checkout not found: " + checkoutId));
         expireCheckoutIfNeeded(checkout);
         if (checkout.getStatus() != OrderStatus.PENDING_PAYMENT) {
             throw new IllegalStateException("结算单已关闭或不可支付");
         }
+        if (!checkout.hasReceiver()) throw new IllegalStateException("请先选择收货地址");
         paymentRepository.findByCheckoutId(checkoutId)
                 .orElseThrow(() -> new IllegalArgumentException("Payment not found for checkout: " + checkoutId))
                 .beginPaying();
+        return checkout;
     }
 
     @Transactional
-    public Order createOrder(String userId, String productId, Integer requestedQuantity) {
+    public Order createOrder(String userId, String productId, String typeId, Integer requestedQuantity) {
         int quantity = requestedQuantity == null ? 1 : requestedQuantity;
         Product product = productRepository.findByIdAndActiveTrue(productId)
                 .orElseThrow(() -> new IllegalArgumentException("Product not found or inactive: " + productId));
-        Order order = orderRepository.save(new Order(userId, product, quantity));
+        ProductType type = resolveType(product.getId(), typeId);
+        Order order = orderRepository.save(new Order(userId, product, type, quantity));
         paymentRepository.save(new Payment(order.getId(), order.getAmount()));
         return order;
+    }
+
+    private ProductType resolveType(String productId, String typeId) {
+        if (typeId != null && !typeId.isBlank()) {
+            return productTypeRepository.findByIdAndProductIdAndActiveTrue(typeId, productId)
+                    .orElseThrow(() -> new IllegalArgumentException("商品类型不存在或已下架"));
+        }
+        return productTypeRepository.findByProductIdAndActiveTrueOrderBySortOrderAscIdAsc(productId).stream()
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("商品尚未配置可售类型"));
     }
 
     @Transactional
@@ -229,6 +283,7 @@ public class OrderApplicationService {
         Checkout checkout = checkoutRepository.findByIdAndUserId(checkoutId, userId)
                 .orElseThrow(() -> new IllegalArgumentException("Checkout not found: " + checkoutId));
         if (checkout.getStatus() == OrderStatus.CANCELLED) return checkout;
+        couponService.releaseCheckout(checkout);
         checkout.cancel();
         paymentRepository.findByCheckoutId(checkoutId).ifPresent(Payment::close);
         orderRepository.findByCheckoutIdOrderByCreatedAtAsc(checkoutId).forEach(order -> {
@@ -246,6 +301,7 @@ public class OrderApplicationService {
             if (checkout.getStatus() != OrderStatus.CANCELLED) {
                 throw new IllegalStateException("仅已取消结算单可以删除");
             }
+            couponService.releaseCheckout(checkout);
             paymentRepository.deleteByCheckoutId(checkout.getId());
             orderRepository.deleteByCheckoutId(checkout.getId());
             checkoutRepository.delete(checkout);
@@ -304,6 +360,8 @@ public class OrderApplicationService {
             if (order.getStatus() != OrderStatus.PENDING_PAYMENT) throw new IllegalStateException("商品订单状态与结算单不一致");
         }
         orders.forEach(Order::markPaid);
+        couponService.markCheckoutUsed(checkoutId);
+        couponService.grantPurchaseReward(checkout.getUserId());
     }
 
     @Transactional
@@ -320,6 +378,7 @@ public class OrderApplicationService {
         }
         payment.succeed(transactionId);
         order.markPaid();
+        couponService.grantPurchaseReward(order.getUserId());
         return order;
     }
 

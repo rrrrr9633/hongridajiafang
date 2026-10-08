@@ -36,7 +36,8 @@ public class AccessTokenFilter extends OncePerRequestFilter {
                 || request.getRequestURI().equals("/api/auth/dev")
                 || request.getRequestURI().startsWith("/actuator/")
                 || (request.getRequestURI().equals("/api/products") && request.getMethod().equals("GET"))
-                || (request.getRequestURI().startsWith("/api/reviews/products/") && request.getMethod().equals("GET"))) {
+                || (request.getRequestURI().startsWith("/api/reviews/products/") && request.getMethod().equals("GET"))
+                || (request.getRequestURI().equals("/api/payments/wechat/notify") && request.getMethod().equals("POST"))) {
             filterChain.doFilter(request, response);
             return;
         }

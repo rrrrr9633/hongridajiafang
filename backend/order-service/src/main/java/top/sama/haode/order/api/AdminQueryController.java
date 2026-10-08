@@ -112,7 +112,11 @@ public class AdminQueryController {
 
     public record OrderResponse(String id, String userId, String productId, String title, BigDecimal amount, String status, Instant createdAt) {
         static OrderResponse from(Order order) {
-            return new OrderResponse(order.getId().toString(), order.getUserId(), order.getProductId(), order.getProductName(), order.getAmount(), order.getStatus().name(), order.getCreatedAt());
+            return new OrderResponse(order.getId().toString(), order.getUserId(), order.getProductId(),
+                    order.getProductTypeName() == null || order.getProductTypeName().isBlank()
+                            ? order.getProductName()
+                            : order.getProductName() + " · " + order.getProductTypeName(),
+                    order.getAmount(), order.getStatus().name(), order.getCreatedAt());
         }
     }
 
