@@ -1,0 +1,24 @@
+# Java / Maven
+backend/**/target/
+.mvn/
+*.iml
+
+# Local configuration, runtime state, and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.runtime/
+
+# WeChat Mini Program
+miniapp/project.private.config.json
+miniapp/config/env.local.js
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+
+miniapp
+admin

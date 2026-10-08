@@ -1,0 +1,61 @@
+server:
+  port: ${ORDER_SERVICE_PORT:8081}
+
+spring:
+  application:
+    name: haode-order-service
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:haode}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: ${MYSQL_USERNAME:haode}
+    password: ${MYSQL_PASSWORD:}
+    hikari:
+      maximum-pool-size: ${MYSQL_POOL_SIZE:10}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        format_sql: false
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      database: ${REDIS_DATABASE:0}
+      password: ${REDIS_PASSWORD:}
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  servlet:
+    multipart:
+      max-file-size: 8MB
+      max-request-size: 8MB
+
+  media:
+    storage-dir: ${HAODE_MEDIA_STORAGE_DIR:./.runtime/media}
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+app:
+  env: ${APP_ENV:production}
+
+admin:
+  username: ${HAODE_ADMIN_USERNAME:}
+  password: ${HAODE_ADMIN_PASSWORD:}
+  token-secret: ${HAODE_ADMIN_TOKEN_SECRET:}
+
+wechat:
+  app-id: ${WECHAT_APPID:}
+  secret: ${WECHAT_SECRET:}
+  pay:
+    mchid: ${WECHAT_PAY_MCHID:}
+    serial-no: ${WECHAT_PAY_SERIAL_NO:}
+    private-key-path: ${WECHAT_PAY_PRIVATE_KEY_PATH:}
+    api-v3-key: ${WECHAT_PAY_API_V3_KEY:}
+    notify-url: ${WECHAT_PAY_NOTIFY_URL:}

@@ -1,0 +1,2 @@
+ALTER TABLE reviews
+    MODIFY COLUMN rating INT NOT NULL;
