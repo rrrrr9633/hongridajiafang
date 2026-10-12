@@ -7,7 +7,7 @@ backend/**/target/
 .env
 .env.*
 !.env.example
-
+*.pem
 *.key
 *.p12
 *cert*.zip
@@ -23,4 +23,3 @@ miniapp/config/env.local.js
 .DS_Store
 
 miniapp
-admin

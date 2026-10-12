@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>红日大家纺｜管理后台</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main id="login-view" class="auth-shell">
+    <section class="auth-card">
+      <p class="eyebrow">RED SUN TEXTILES</p>
+      <h1>管理后台</h1>
+      <p class="muted">商品、用户、订单与流水均来自服务端。</p>
+      <form id="login-form">
+        <label>管理员账号<input name="username" autocomplete="username" required></label>
+        <label>管理员密码<input name="password" type="password" autocomplete="current-password" required></label>
+        <button class="primary" type="submit">进入后台</button>
+      </form>
+      <p id="login-error" class="error"></p>
+    </section>
+  </main>
+
+  <main id="app-view" class="app-shell hidden">
+    <aside class="sidebar">
+      <div class="brand"><span>红</span><strong>红日大家纺</strong></div>
+      <nav>
+        <button data-section="overview" class="active">总览</button>
+        <button data-section="homepage">首页展示</button>
+        <button data-section="products">商品管理</button>
+        <button data-section="users">用户信息</button>
+        <button data-section="orders">订单管理</button>
+        <button data-section="after-sales">售后退款</button>
+        <button data-section="coupons">优惠券</button>
+        <button data-section="announcements">公告</button>
+        <button data-section="reviews">评价审核</button>
+        <button data-section="support">客服中心</button>
+      </nav>
+      <button id="logout" class="logout">退出登录</button>
+    </aside>
+    <section class="content">
+      <header><div><p class="eyebrow">ADMIN CONSOLE</p><h1 id="page-title">经营总览</h1></div><button id="refresh" class="secondary">刷新数据</button></header>
+      <p id="page-error" class="error"></p>
+      <section id="overview" class="section active-section">
+        <div class="metrics"><article><span>用户数</span><strong id="metric-users">—</strong></article><article><span>订单数</span><strong id="metric-orders">—</strong></article><article><span>已支付流水</span><strong id="metric-paid">—</strong></article></div>
+        <div class="panel"><h2>数据口径</h2><p class="muted">已支付流水仅统计支付状态为 SUCCESS 的服务端支付记录，不包含未支付、关闭或取消订单。</p></div>
+      </section>
+      <section id="homepage" class="section">
+        <p class="muted">勾选「上首页」后，商品会出现在小程序首页轮播和双列。未上首页的只在商店分区里。</p>
+        <div id="homepage-table" class="table-wrap"></div>
+      </section>
+      <section id="products" class="section">
+        <div class="toolbar"><h2>商品管理</h2><button id="new-product" class="primary">添加商品</button></div>
+        <div class="filters" id="product-filters">
+          <input id="products-q" placeholder="搜索名称 / 类型 / 标签">
+          <select id="products-zone"><option value="">全部区域</option></select>
+          <select id="products-status">
+            <option value="">全部状态</option>
+            <option value="active">在售</option>
+            <option value="inactive">已下架</option>
+          </select>
+        </div>
+        <div id="product-form-wrap" class="panel editor hidden">
+          <div class="editor-bar">
+            <strong id="editor-title">编辑商品</strong>
+            <div class="editor-bar-actions">
+              <button type="button" id="toggle-editor" class="secondary">收起</button>
+              <button type="button" id="cancel-product" class="secondary">关闭</button>
+            </div>
+          </div>
+          <div id="product-editor-body">
+          <form id="product-form" class="product-form" action="#" method="post">
+            <input type="hidden" name="id">
+            <label>商品名称<input name="name" required></label>
+            <label>副标题<input name="subtitle" required></label>
+            <label>售价<input name="price" type="number" min="0.01" step="0.01" required></label>
+            <label>原价<input name="originalPrice" type="number" min="0" step="0.01"></label>
+            <label>陈列区域<input name="zone" placeholder="床品区 / 手套区 / 袜子区" required></label>
+            <label>排序<input name="sortOrder" type="number" value="0"></label>
+            <label>封面图<input name="imageFile" type="file" accept="image/jpeg,image/png,image/gif,image/webp"></label>
+            <label>或封面 URL<input name="imageUrl" placeholder="https://... 可留空"></label>
+            <div class="preview-wrap"><img id="product-image-preview" class="preview hidden" alt=""></div>
+            <label>标签<input name="tag"></label>
+            <label>背景色<input name="color" placeholder="#d9e5d8"></label>
+            <label>强调色<input name="accent" placeholder="#6d896e"></label>
+            <label>纹样文字<input name="pattern"></label>
+            <label class="checkbox"><input name="homepage" type="checkbox"> 首页展示</label>
+            <label class="checkbox"><input name="active" type="checkbox" checked> 在售</label>
+            <div class="form-actions">
+              <button type="button" id="save-product" class="primary">保存商品</button>
+            </div>
+          </form>
+          <div id="product-types-panel" class="types-panel">
+            <div class="type-head">
+              <h3>商品类型</h3>
+              <button type="button" id="add-product-type" class="secondary">添加类型</button>
+            </div>
+            <p id="types-hint" class="muted">先点「保存商品」，再给每个颜色单独点「提交此类型」。</p>
+            <p id="type-error" class="error"></p>
+            <div id="product-types" class="type-list"></div>
+          </div>
+          </div>
+        </div>
+        <div id="products-table" class="table-wrap"></div>
+      </section>
+      <section id="users" class="section">
+        <div class="filters">
+          <input id="users-q" placeholder="搜索手机号 / 用户 ID">
+          <button type="button" class="secondary" id="users-search">搜索</button>
+        </div>
+        <div id="users-table" class="table-wrap"></div>
+        <div id="users-pager" class="pager"></div>
+      </section>
+      <section id="orders" class="section">
+        <p class="muted">用户在小程序结算页提交收货地址。已支付后在此按地址线下寄出，再点「填单号」或「无需物流」。</p>
+        <div class="filters">
+          <input id="orders-q" placeholder="搜索订单号 / 用户 / 商品">
+          <select id="orders-status">
+            <option value="">全部状态</option>
+            <option value="PENDING_PAYMENT">待支付</option>
+            <option value="PAID">已支付</option>
+            <option value="PROCESSING">备货中</option>
+            <option value="COMPLETED">已完成</option>
+            <option value="CANCELLED">已取消</option>
+            <option value="REFUNDING">退款中</option>
+            <option value="REFUNDED">已退款</option>
+          </select>
+          <button type="button" class="secondary" id="orders-search">筛选</button>
+        </div>
+        <div id="orders-table" class="table-wrap"></div>
+        <div id="orders-pager" class="pager"></div>
+      </section>
+      <section id="after-sales" class="section">
+        <p class="muted">同意售后会向微信发起退款；拒绝则把订单恢复为已支付/已发货。</p>
+        <div id="after-sales-table" class="table-wrap"></div>
+        <div id="after-sales-pager" class="pager"></div>
+      </section>
+      <section id="coupons" class="section">
+        <div class="panel">
+          <h2>邀请发放政策</h2>
+          <p class="muted">绑码双方各得优惠券1；被邀请人累计实付达标后，邀请人再得优惠券2。被邀请人只能绑定一次上级，邀请人可以邀请无数人。政策只影响之后发放，已发出的券按当时快照。</p>
+          <form id="coupon-policy-form" class="product-form">
+            <label class="checkbox"><input name="enabled" type="checkbox"> 开启邀请发券</label>
+            <label>优惠券1
+              <select name="inviteTemplateId"></select>
+            </label>
+            <label>优惠券2
+              <select name="purchaseTemplateId"></select>
+            </label>
+            <label>被邀请人累计实付门槛
+              <input name="purchaseThreshold" type="number" min="0" step="0.01" required>
+            </label>
+            <div class="form-actions">
+              <button type="submit" class="primary">保存政策</button>
+            </div>
+          </form>
+        </div>
+        <div class="toolbar" style="margin-top:28px">
+          <h2>优惠券模板</h2>
+          <button type="button" id="new-coupon-template" class="primary">新建模板</button>
+        </div>
+        <p class="muted">满 0 减 X 即无门槛。每单上限是同一张券一次结算最多用几张。模板可随时改，满减金额已发到用户手里的不会跟着变，上限按当前模板生效。</p>
+        <form id="coupon-template-form" class="product-form panel hidden">
+          <input type="hidden" name="id">
+          <label>名称<input name="name" required placeholder="卷一"></label>
+          <label>满（门槛）<input name="thresholdAmount" type="number" min="0" step="0.01" required></label>
+          <label>减（金额）<input name="discountAmount" type="number" min="0.01" step="0.01" required></label>
+          <label>每单上限<input name="perOrderLimit" type="number" min="1" max="999" value="1" required></label>
+          <label class="checkbox"><input name="active" type="checkbox" checked> 启用</label>
+          <div class="form-actions">
+            <button type="submit" class="primary">保存模板</button>
+            <button type="button" id="cancel-coupon-template" class="secondary">取消</button>
+          </div>
+        </form>
+        <div id="coupon-templates-table" class="table-wrap"></div>
+      </section>
+      <section id="announcements" class="section">
+        <div class="toolbar">
+          <h2>公告</h2>
+          <button type="button" id="new-announcement" class="primary">新建公告</button>
+        </div>
+        <form id="announcement-form" class="product-form panel hidden">
+          <input type="hidden" name="id">
+          <label class="span-2">标题<input name="title" required></label>
+          <label class="span-2">内容<textarea name="content" rows="8" required></textarea></label>
+          <label class="checkbox"><input name="published" type="checkbox" checked> 发布</label>
+          <div class="form-actions">
+            <button type="submit" class="primary">保存公告</button>
+            <button type="button" id="cancel-announcement" class="secondary">取消</button>
+          </div>
+        </form>
+        <div id="announcements-table" class="table-wrap"></div>
+      </section>
+      <section id="reviews" class="section">
+        <div class="filters">
+          <input id="reviews-q" placeholder="搜索评价内容 / 用户 / 订单">
+          <select id="reviews-status">
+            <option value="">全部状态</option>
+            <option value="PENDING_REVIEW">待审核</option>
+            <option value="APPROVED">已通过</option>
+            <option value="REJECTED">已拒绝</option>
+          </select>
+          <button type="button" class="secondary" id="reviews-search">筛选</button>
+        </div>
+        <div id="reviews-table" class="table-wrap"></div>
+        <div id="reviews-pager" class="pager"></div>
+      </section>
+      <section id="support" class="section">
+        <div class="wx-desk">
+          <aside class="wx-list">
+            <div class="wx-list-head"><input id="support-q" placeholder="搜索用户 / 手机号"></div>
+            <div id="support-threads" class="wx-threads"></div>
+          </aside>
+          <section class="wx-chat">
+            <header class="wx-chat-head">
+              <strong id="support-peer">选择一个会话</strong>
+              <div class="wx-wechat">
+                <label>客服微信号<input id="support-wechat" placeholder="例如 hongri_kf"></label>
+                <button type="button" id="save-wechat" class="secondary">保存</button>
+              </div>
+            </header>
+            <div id="support-log" class="wx-log"></div>
+            <div class="wx-composer">
+              <textarea id="support-input" rows="3" placeholder="输入消息，Enter 发送"></textarea>
+              <button type="button" id="support-send-btn" class="primary">发送</button>
+            </div>
+          </section>
+        </div>
+      </section>
+    </section>
+  </main>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
