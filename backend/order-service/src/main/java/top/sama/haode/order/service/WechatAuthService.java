@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestClient;
@@ -48,7 +49,10 @@ public class WechatAuthService {
     ) {
         this.userRepository = userRepository;
         this.sessionRepository = sessionRepository;
-        this.restClient = RestClient.create();
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(10_000);
+        factory.setReadTimeout(20_000);
+        this.restClient = RestClient.builder().requestFactory(factory).build();
         this.objectMapper = objectMapper;
         this.appId = appId;
         this.secret = secret;
@@ -164,8 +168,9 @@ public class WechatAuthService {
             }
             return spec.exchange((request, response) -> {
                 String text = new String(response.getBody().readAllBytes(), StandardCharsets.UTF_8);
+                int status = response.getStatusCode().value();
                 if (text == null || text.isBlank()) {
-                    throw new IllegalStateException("微信接口无响应");
+                    throw new IllegalStateException("微信接口无响应（HTTP " + status + "）");
                 }
                 return objectMapper.readTree(text);
             });
