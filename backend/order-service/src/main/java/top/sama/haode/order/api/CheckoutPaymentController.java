@@ -45,11 +45,23 @@ public class CheckoutPaymentController {
                     .map(Order::getProductName)
                     .findFirst()
                     .orElse("红日大家纺");
-            return wechatPayService.prepay(checkout, user.getWechatOpenid(), description);
+            return wechatPayService.prepay(checkout.getId(), checkout.getAmount(), user.getWechatOpenid(), description);
         } catch (IllegalArgumentException exception) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, exception.getMessage(), exception);
         } catch (IllegalStateException exception) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, exception.getMessage(), exception);
+        }
+    }
+
+    @PostMapping("/{checkoutId}/payments/wechat/sync")
+    public void sync(
+            @RequestAttribute("userId") String userId,
+            @PathVariable UUID checkoutId
+    ) {
+        try {
+            applicationService.syncCheckoutPayment(checkoutId, userId);
+        } catch (IllegalArgumentException exception) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, exception.getMessage(), exception);
         }
     }
 }

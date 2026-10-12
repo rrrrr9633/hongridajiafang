@@ -113,7 +113,7 @@ public class Payment {
             }
             return;
         }
-        if (status != PaymentStatus.INITIATED && status != PaymentStatus.PAYING) {
+        if (status != PaymentStatus.INITIATED && status != PaymentStatus.PAYING && status != PaymentStatus.CLOSED) {
             throw new IllegalStateException("Payment cannot transition to success");
         }
         this.status = PaymentStatus.SUCCESS;
@@ -129,6 +129,25 @@ public class Payment {
             throw new IllegalStateException("Payment cannot be closed from status: " + status);
         }
         status = PaymentStatus.CLOSED;
+        updatedAt = Instant.now();
+    }
+
+    public void markRefunding() {
+        if (status == PaymentStatus.REFUNDING) return;
+        if (status != PaymentStatus.SUCCESS && status != PaymentStatus.REFUNDED) {
+            throw new IllegalStateException("Payment cannot refund from status: " + status);
+        }
+        if (status == PaymentStatus.REFUNDED) return;
+        status = PaymentStatus.REFUNDING;
+        updatedAt = Instant.now();
+    }
+
+    public void markRefunded() {
+        if (status == PaymentStatus.REFUNDED) return;
+        if (status != PaymentStatus.SUCCESS && status != PaymentStatus.REFUNDING) {
+            throw new IllegalStateException("Payment cannot complete refund from status: " + status);
+        }
+        status = PaymentStatus.REFUNDED;
         updatedAt = Instant.now();
     }
 }

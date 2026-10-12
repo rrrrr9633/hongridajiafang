@@ -56,6 +56,18 @@ public class Order {
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
+    @Column(name = "tracking_no", length = 64)
+    private String trackingNo;
+
+    @Column(name = "express_company", length = 32)
+    private String expressCompany;
+
+    @Column(name = "shipped_at")
+    private Instant shippedAt;
+
+    @Column(name = "shipping_uploaded_at")
+    private Instant shippingUploadedAt;
+
     protected Order() {
     }
 
@@ -130,6 +142,22 @@ public class Order {
         return updatedAt;
     }
 
+    public String getTrackingNo() {
+        return trackingNo;
+    }
+
+    public String getExpressCompany() {
+        return expressCompany;
+    }
+
+    public Instant getShippedAt() {
+        return shippedAt;
+    }
+
+    public Instant getShippingUploadedAt() {
+        return shippingUploadedAt;
+    }
+
     public boolean canRequestAfterSale() {
         return status == OrderStatus.PAID
                 || status == OrderStatus.PROCESSING
@@ -145,10 +173,47 @@ public class Order {
     }
 
     public void markPaid() {
-        if (status != OrderStatus.PENDING_PAYMENT) {
+        if (status == OrderStatus.PAID || status == OrderStatus.PROCESSING || status == OrderStatus.COMPLETED) {
+            return;
+        }
+        if (status != OrderStatus.PENDING_PAYMENT && status != OrderStatus.CANCELLED) {
             throw new IllegalStateException("Only pending orders can be paid");
         }
         status = OrderStatus.PAID;
+        updatedAt = Instant.now();
+    }
+
+    public void markProcessing() {
+        if (status == OrderStatus.PROCESSING) return;
+        if (status != OrderStatus.PAID) throw new IllegalStateException("Only paid orders can be shipped");
+        status = OrderStatus.PROCESSING;
+        updatedAt = Instant.now();
+    }
+
+    public void ship(String trackingNo, String expressCompany) {
+        markProcessing();
+        this.trackingNo = trackingNo == null ? null : trackingNo.trim();
+        this.expressCompany = expressCompany == null ? null : expressCompany.trim();
+        this.shippedAt = Instant.now();
+        updatedAt = this.shippedAt;
+    }
+
+    public void markShippingUploaded() {
+        this.shippingUploadedAt = Instant.now();
+        updatedAt = this.shippingUploadedAt;
+    }
+
+    public void restoreFromRefunding() {
+        if (status != OrderStatus.REFUNDING) throw new IllegalStateException("当前订单不是售后中");
+        status = shippedAt != null ? OrderStatus.PROCESSING : OrderStatus.PAID;
+        updatedAt = Instant.now();
+    }
+
+    public void markRefunded() {
+        if (status != OrderStatus.REFUNDING && status != OrderStatus.REFUNDED) {
+            throw new IllegalStateException("当前订单状态不支持完成退款");
+        }
+        status = OrderStatus.REFUNDED;
         updatedAt = Instant.now();
     }
 

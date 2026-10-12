@@ -157,7 +157,10 @@ public class Checkout {
     }
 
     public void markPaid() {
-        if (status != OrderStatus.PENDING_PAYMENT) throw new IllegalStateException("结算单当前状态不可支付");
+        if (status == OrderStatus.PAID) return;
+        if (status != OrderStatus.PENDING_PAYMENT && status != OrderStatus.CANCELLED) {
+            throw new IllegalStateException("结算单当前状态不可支付");
+        }
         status = OrderStatus.PAID;
         updatedAt = Instant.now();
     }

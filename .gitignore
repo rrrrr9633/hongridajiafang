@@ -7,8 +7,10 @@ backend/**/target/
 .env
 .env.*
 !.env.example
-*.pem
+
 *.key
+*.p12
+*cert*.zip
 .runtime/
 
 # WeChat Mini Program

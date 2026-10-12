@@ -3,15 +3,18 @@ package top.sama.haode.order.application;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import top.sama.haode.order.domain.Checkout;
 import top.sama.haode.order.domain.AfterSale;
+import top.sama.haode.order.domain.AfterSaleStatus;
+import top.sama.haode.order.domain.Checkout;
 import top.sama.haode.order.domain.Order;
 import top.sama.haode.order.domain.OrderStatus;
 import top.sama.haode.order.domain.Payment;
+import top.sama.haode.order.domain.PaymentStatus;
 import top.sama.haode.order.domain.Product;
 import top.sama.haode.order.domain.ProductType;
 import top.sama.haode.order.domain.Review;
 import top.sama.haode.order.domain.ReviewStatus;
+import top.sama.haode.order.domain.User;
 import top.sama.haode.order.repository.AfterSaleRepository;
 import top.sama.haode.order.repository.CheckoutRepository;
 import top.sama.haode.order.repository.ReviewRepository;
@@ -19,6 +22,9 @@ import top.sama.haode.order.repository.OrderRepository;
 import top.sama.haode.order.repository.PaymentRepository;
 import top.sama.haode.order.repository.ProductRepository;
 import top.sama.haode.order.repository.ProductTypeRepository;
+import top.sama.haode.order.repository.UserRepository;
+import top.sama.haode.order.service.WechatPayService;
+import top.sama.haode.order.service.WechatShippingService;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -36,6 +42,9 @@ public class OrderApplicationService {
     private final CheckoutRepository checkoutRepository;
     private final CouponService couponService;
     private final AddressService addressService;
+    private final WechatPayService wechatPayService;
+    private final WechatShippingService wechatShippingService;
+    private final UserRepository userRepository;
 
     public OrderApplicationService(
             OrderRepository orderRepository,
@@ -46,7 +55,10 @@ public class OrderApplicationService {
             AfterSaleRepository afterSaleRepository,
             CheckoutRepository checkoutRepository,
             CouponService couponService,
-            AddressService addressService
+            AddressService addressService,
+            WechatPayService wechatPayService,
+            WechatShippingService wechatShippingService,
+            UserRepository userRepository
     ) {
         this.orderRepository = orderRepository;
         this.paymentRepository = paymentRepository;
@@ -57,6 +69,9 @@ public class OrderApplicationService {
         this.checkoutRepository = checkoutRepository;
         this.couponService = couponService;
         this.addressService = addressService;
+        this.wechatPayService = wechatPayService;
+        this.wechatShippingService = wechatShippingService;
+        this.userRepository = userRepository;
     }
 
     @Transactional(readOnly = true)
@@ -101,8 +116,9 @@ public class OrderApplicationService {
         if (afterSaleRepository.existsByOrderIdAndUserId(orderId, userId)) {
             throw new IllegalStateException("该订单已经提交过售后申请");
         }
+        OrderStatus previous = order.getStatus();
         order.markRefunding();
-        return afterSaleRepository.save(new AfterSale(orderId, userId, reason));
+        return afterSaleRepository.save(new AfterSale(orderId, userId, reason, previous));
     }
 
 
@@ -146,6 +162,7 @@ public class OrderApplicationService {
     private void expireCheckoutIfNeeded(Checkout checkout) {
         if (checkout.getStatus() != OrderStatus.PENDING_PAYMENT
                 || checkout.getCreatedAt().isAfter(Instant.now().minus(Duration.ofMinutes(5)))) return;
+        if (confirmCheckoutFromWechat(checkout.getId())) return;
         couponService.releaseCheckout(checkout);
         checkout.cancel();
         paymentRepository.findByCheckoutId(checkout.getId()).ifPresent(Payment::close);
@@ -158,6 +175,8 @@ public class OrderApplicationService {
     public CheckoutResult getCheckout(UUID checkoutId, String userId) {
         Checkout checkout = checkoutRepository.findByIdAndUserId(checkoutId, userId)
                 .orElseThrow(() -> new IllegalArgumentException("Checkout not found: " + checkoutId));
+        confirmCheckoutFromWechat(checkoutId);
+        checkout = checkoutRepository.findByIdAndUserId(checkoutId, userId).orElse(checkout);
         expireCheckoutIfNeeded(checkout);
         if (checkout.getStatus() == OrderStatus.PENDING_PAYMENT && !checkout.hasReceiver()) {
             var fallback = addressService.defaultAddress(userId);
@@ -238,6 +257,8 @@ public class OrderApplicationService {
     public Order getOrder(UUID orderId, String userId) {
         Order order = orderRepository.findByIdAndUserId(orderId, userId)
                 .orElseThrow(() -> new IllegalArgumentException("Order not found: " + orderId));
+        confirmOrderFromWechat(order);
+        order = orderRepository.findByIdAndUserId(orderId, userId).orElse(order);
         expireIfNeeded(order);
         return order;
     }
@@ -260,6 +281,8 @@ public class OrderApplicationService {
                 || order.getCreatedAt().isAfter(Instant.now().minus(Duration.ofMinutes(5)))) {
             return;
         }
+        if (confirmOrderFromWechat(order)) return;
+        if (order.getCheckoutId() != null) return;
         order.cancel();
         paymentRepository.findByOrderId(order.getId()).ifPresent(Payment::close);
     }
@@ -348,16 +371,20 @@ public class OrderApplicationService {
                 .orElseThrow(() -> new IllegalArgumentException("Checkout not found: " + checkoutId));
         Payment payment = paymentRepository.findByCheckoutId(checkoutId)
                 .orElseThrow(() -> new IllegalArgumentException("Payment not found for checkout: " + checkoutId));
-        if (checkout.getStatus() == OrderStatus.PAID && payment.getStatus() == top.sama.haode.order.domain.PaymentStatus.SUCCESS) {
+        if (checkout.getStatus() == OrderStatus.PAID && payment.getStatus() == PaymentStatus.SUCCESS) {
             if (!transactionId.equals(payment.getTransactionId())) throw new IllegalStateException("Payment transaction does not match existing payment");
             return;
         }
-        if (checkout.getStatus() != OrderStatus.PENDING_PAYMENT) throw new IllegalStateException("结算单状态与支付结果不一致");
+        if (checkout.getStatus() != OrderStatus.PENDING_PAYMENT && checkout.getStatus() != OrderStatus.CANCELLED) {
+            throw new IllegalStateException("结算单状态与支付结果不一致");
+        }
         payment.succeed(transactionId);
         checkout.markPaid();
         List<Order> orders = orderRepository.findByCheckoutIdOrderByCreatedAtAsc(checkoutId);
         for (Order order : orders) {
-            if (order.getStatus() != OrderStatus.PENDING_PAYMENT) throw new IllegalStateException("商品订单状态与结算单不一致");
+            if (order.getStatus() != OrderStatus.PENDING_PAYMENT && order.getStatus() != OrderStatus.CANCELLED) {
+                throw new IllegalStateException("商品订单状态与结算单不一致");
+            }
         }
         orders.forEach(Order::markPaid);
         couponService.markCheckoutUsed(checkoutId);
@@ -386,5 +413,190 @@ public class OrderApplicationService {
     public Order markPaid(UUID orderId, String userId, String transactionId) {
         Order order = getOrder(orderId, userId);
         return markPaid(order.getId(), transactionId);
+    }
+
+    @Transactional
+    public boolean confirmPaidByOutTradeNo(String outTradeNo, String transactionId) {
+        UUID id = WechatPayService.idFromOutTradeNo(outTradeNo);
+        if (checkoutRepository.findById(id).isPresent()) {
+            markCheckoutPaid(id, transactionId);
+            return true;
+        }
+        if (orderRepository.findById(id).isPresent()) {
+            markPaid(id, transactionId);
+            return true;
+        }
+        throw new IllegalArgumentException("找不到对应支付单");
+    }
+
+    @Transactional
+    public boolean confirmCheckoutFromWechat(UUID checkoutId) {
+        return confirmWechatTrade(checkoutId, true);
+    }
+
+    @Transactional
+    public boolean confirmOrderFromWechat(Order order) {
+        UUID tradeId = order.getCheckoutId() != null ? order.getCheckoutId() : order.getId();
+        return confirmWechatTrade(tradeId, order.getCheckoutId() != null);
+    }
+
+    @Transactional
+    public void syncCheckoutPayment(UUID checkoutId, String userId) {
+        getCheckout(checkoutId, userId);
+        confirmCheckoutFromWechat(checkoutId);
+    }
+
+    @Transactional
+    public void syncOrderPayment(UUID orderId, String userId) {
+        Order order = getOrder(orderId, userId);
+        confirmOrderFromWechat(order);
+    }
+
+    private boolean confirmWechatTrade(UUID tradeId, boolean checkout) {
+        if (!wechatPayService.configured()) return false;
+        try {
+            return wechatPayService.queryByOutTradeNo(tradeId)
+                    .filter(result -> "SUCCESS".equals(result.tradeState()) && result.transactionId() != null && !result.transactionId().isBlank())
+                    .map(result -> {
+                        if (checkout) markCheckoutPaid(tradeId, result.transactionId());
+                        else markPaid(tradeId, result.transactionId());
+                        return true;
+                    })
+                    .orElse(false);
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    @Scheduled(fixedDelay = 30000)
+    @Transactional
+    public void reconcilePayingWechatOrders() {
+        if (!wechatPayService.configured()) return;
+        paymentRepository.findByStatus(PaymentStatus.PAYING).forEach(payment -> {
+            if (payment.getCheckoutId() != null) confirmCheckoutFromWechat(payment.getCheckoutId());
+            else if (payment.getOrderId() != null) {
+                orderRepository.findById(payment.getOrderId()).ifPresent(this::confirmOrderFromWechat);
+            }
+        });
+    }
+
+    @Transactional
+    public Order shipOrder(UUID orderId, String mode, String trackingNo, String expressCompany) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new IllegalArgumentException("Order not found: " + orderId));
+        if (order.getStatus() != OrderStatus.PAID && order.getStatus() != OrderStatus.PROCESSING) {
+            throw new IllegalStateException("当前订单状态不可发货");
+        }
+        UUID checkoutId = order.getCheckoutId();
+        List<Order> group = checkoutId == null
+                ? List.of(order)
+                : orderRepository.findByCheckoutIdOrderByCreatedAtAsc(checkoutId);
+        Payment payment = checkoutId != null
+                ? paymentRepository.findByCheckoutId(checkoutId).orElseThrow(() -> new IllegalArgumentException("Payment not found"))
+                : paymentRepository.findByOrderId(orderId).orElseThrow(() -> new IllegalArgumentException("Payment not found"));
+        if (payment.getTransactionId() == null || payment.getTransactionId().isBlank()) {
+            throw new IllegalStateException("订单尚未完成微信支付，不能上报发货");
+        }
+        boolean express = isExpressShip(mode, trackingNo);
+        String company = expressCompany == null ? "" : expressCompany.trim();
+        String tracking = trackingNo == null ? "" : trackingNo.trim();
+        if (express) {
+            if (tracking.isBlank()) throw new IllegalArgumentException("快递发货需要物流单号");
+            if (company.isBlank()) throw new IllegalArgumentException("请填写物流公司编码，例如 SF");
+        }
+        User user = userRepository.findById(order.getUserId()).orElseThrow(() -> new IllegalArgumentException("用户不存在"));
+        String itemDesc = group.stream().map(Order::getProductName).reduce((a, b) -> a + "、" + b).orElse("红日大家纺");
+        Checkout checkout = checkoutId == null ? null : checkoutRepository.findById(checkoutId).orElse(null);
+        String phone = checkout == null ? "" : checkout.getReceiverPhone();
+        wechatShippingService.upload(new WechatShippingService.ShippingUpload(
+                payment.getTransactionId(),
+                user.getWechatOpenid(),
+                itemDesc,
+                express ? 1 : 4,
+                express ? tracking : "",
+                company,
+                phone
+        ));
+        for (Order item : group) {
+            item.ship(express ? tracking : "NONE", express ? company : "NONE");
+            item.markShippingUploaded();
+        }
+        return order;
+    }
+
+    private static boolean isExpressShip(String mode, String trackingNo) {
+        String shippingMode = mode == null ? "" : mode.trim().toUpperCase();
+        if (shippingMode.equals("NONE") || shippingMode.equals("PICKUP")) return false;
+        if (shippingMode.equals("EXPRESS")) return true;
+        return trackingNo != null && !trackingNo.isBlank();
+    }
+
+    @Transactional
+    public AfterSale approveAfterSale(UUID afterSaleId) {
+        AfterSale afterSale = afterSaleRepository.findById(afterSaleId)
+                .orElseThrow(() -> new IllegalArgumentException("售后单不存在"));
+        if (afterSale.getStatus() == AfterSaleStatus.REFUNDED) return afterSale;
+        if (afterSale.getStatus() == AfterSaleStatus.APPROVED) return afterSale;
+        Order order = orderRepository.findById(afterSale.getOrderId())
+                .orElseThrow(() -> new IllegalArgumentException("订单不存在"));
+        Payment payment = resolvePayment(order);
+        afterSale.approve(WechatPayService.outTradeNo(afterSale.getId()));
+        payment.markRefunding();
+        WechatPayService.RefundResult result = wechatPayService.refund(
+                payment.getTransactionId(),
+                afterSale.getId(),
+                order.getAmount(),
+                payment.getAmount(),
+                afterSale.getReason()
+        );
+        if ("SUCCESS".equals(result.status())) {
+            afterSale.markRefunded(result.refundId());
+            order.markRefunded();
+            if (allCheckoutOrdersRefunded(order)) payment.markRefunded();
+        }
+        return afterSale;
+    }
+
+    @Transactional
+    public AfterSale rejectAfterSale(UUID afterSaleId) {
+        AfterSale afterSale = afterSaleRepository.findById(afterSaleId)
+                .orElseThrow(() -> new IllegalArgumentException("售后单不存在"));
+        afterSale.reject();
+        Order order = orderRepository.findById(afterSale.getOrderId())
+                .orElseThrow(() -> new IllegalArgumentException("订单不存在"));
+        order.restoreFromRefunding();
+        return afterSale;
+    }
+
+    @Transactional
+    public void confirmRefund(String outRefundNo, String refundId, String refundStatus) {
+        if (!"SUCCESS".equals(refundStatus)) return;
+        AfterSale afterSale = afterSaleRepository.findByOutRefundNo(outRefundNo)
+                .orElseThrow(() -> new IllegalArgumentException("退款单不存在"));
+        afterSale.markRefunded(refundId);
+        Order order = orderRepository.findById(afterSale.getOrderId())
+                .orElseThrow(() -> new IllegalArgumentException("订单不存在"));
+        order.markRefunded();
+        Payment payment = resolvePayment(order);
+        if (allCheckoutOrdersRefunded(order)) payment.markRefunded();
+    }
+
+    public List<AfterSale> listAllAfterSales() {
+        return afterSaleRepository.findAll();
+    }
+
+    private Payment resolvePayment(Order order) {
+        if (order.getCheckoutId() != null) {
+            return paymentRepository.findByCheckoutId(order.getCheckoutId())
+                    .orElseThrow(() -> new IllegalArgumentException("Payment not found"));
+        }
+        return paymentRepository.findByOrderId(order.getId())
+                .orElseThrow(() -> new IllegalArgumentException("Payment not found"));
+    }
+
+    private boolean allCheckoutOrdersRefunded(Order order) {
+        if (order.getCheckoutId() == null) return true;
+        return orderRepository.findByCheckoutIdOrderByCreatedAtAsc(order.getCheckoutId()).stream()
+                .allMatch(item -> item.getStatus() == OrderStatus.REFUNDED);
     }
 }
