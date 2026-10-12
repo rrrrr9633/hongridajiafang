@@ -9,12 +9,14 @@ import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.util.UriComponentsBuilder;
 import top.sama.haode.order.domain.InviteCodes;
 import top.sama.haode.order.domain.Session;
 import top.sama.haode.order.domain.User;
 import top.sama.haode.order.repository.SessionRepository;
 import top.sama.haode.order.repository.UserRepository;
 
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
@@ -156,13 +158,13 @@ public class WechatAuthService {
 
     private JsonNode wechatCall(String method, String path, Map<String, String> query, Object body) {
         try {
+            var uriBuilder = UriComponentsBuilder.fromUriString("https://api.weixin.qq.com" + path);
+            query.forEach(uriBuilder::queryParam);
+            URI uri = uriBuilder.encode().build().toUri();
             var spec = restClient.method(HttpMethod.valueOf(method))
-                    .uri(uriBuilder -> {
-                        var builder = uriBuilder.scheme("https").host("api.weixin.qq.com").path(path);
-                        query.forEach(builder::queryParam);
-                        return builder.build();
-                    })
-                    .accept(MediaType.APPLICATION_JSON);
+                    .uri(uri)
+                    .header("User-Agent", "Mozilla/5.0")
+                    .header("Accept", "*/*");
             if (body != null) {
                 spec = spec.contentType(MediaType.APPLICATION_JSON).body(body);
             }
