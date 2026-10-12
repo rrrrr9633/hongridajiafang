@@ -96,8 +96,10 @@ public class WechatAuthService {
                 .retrieve().body(String.class);
         try {
             WechatSession response = objectMapper.readValue(responseBody, WechatSession.class);
-            if (response.errcode() != null || response.openid() == null || response.openid().isBlank()) {
-                throw new IllegalArgumentException("微信登录凭证无效");
+            if ((response.errcode() != null && response.errcode() != 0)
+                    || response.openid() == null || response.openid().isBlank()) {
+                throw new IllegalArgumentException("微信登录凭证无效"
+                        + (response.errmsg() == null ? "" : "：" + response.errmsg()));
             }
             return response;
         } catch (JsonProcessingException exception) {
@@ -136,16 +138,28 @@ public class WechatAuthService {
     }
 
     private String requestPhoneNumber(String accessToken, String phoneCode) {
-        String responseBody = restClient.post()
-                .uri("https://api.weixin.qq.com/wxa/business/getuserphonenumber?access_token={accessToken}", accessToken)
-                .body(new PhoneCodeRequest(phoneCode)).retrieve().body(String.class);
+        String responseBody;
         try {
-            WechatPhoneResponse response = objectMapper.readValue(responseBody, WechatPhoneResponse.class);
-            if (response.errcode() != null || response.phoneInfo() == null
+            responseBody = restClient.post()
+                    .uri("https://api.weixin.qq.com/wxa/business/getuserphonenumber?access_token={accessToken}", accessToken)
+                    .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                    .body(new PhoneCodeRequest(phoneCode))
+                    .retrieve()
+                    .body(String.class);
+        } catch (Exception exception) {
+            throw new IllegalStateException("微信手机号接口请求失败：" + exception.getMessage(), exception);
+        }
+        try {
+            WechatPhoneResponse response = objectMapper.readValue(responseBody == null ? "{}" : responseBody, WechatPhoneResponse.class);
+            if ((response.errcode() != null && response.errcode() != 0)
+                    || response.phoneInfo() == null
                     || response.phoneInfo().phoneNumber() == null || response.phoneInfo().phoneNumber().isBlank()) {
-                throw new IllegalArgumentException("微信手机号授权无效");
+                throw new IllegalArgumentException("微信手机号授权无效"
+                        + (response.errmsg() == null ? "" : "：" + response.errmsg()));
             }
             return response.phoneInfo().phoneNumber();
+        } catch (IllegalArgumentException exception) {
+            throw exception;
         } catch (JsonProcessingException exception) {
             throw new IllegalStateException("微信手机号响应格式无效", exception);
         }
