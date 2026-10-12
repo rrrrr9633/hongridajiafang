@@ -1,8 +1,10 @@
 package top.sama.haode.order.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestClient;
@@ -18,6 +20,7 @@ import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HexFormat;
+import java.util.Map;
 import java.util.UUID;
 
 @Service
@@ -88,23 +91,19 @@ public class WechatAuthService {
     }
 
     private WechatSession requestWechatSession(String code) {
-        String responseBody = restClient.get()
-                .uri(uriBuilder -> uriBuilder.scheme("https").host("api.weixin.qq.com")
-                        .path("/sns/jscode2session").queryParam("appid", appId)
-                        .queryParam("secret", secret).queryParam("js_code", code)
-                        .queryParam("grant_type", "authorization_code").build())
-                .retrieve().body(String.class);
-        try {
-            WechatSession response = objectMapper.readValue(responseBody, WechatSession.class);
-            if ((response.errcode() != null && response.errcode() != 0)
-                    || response.openid() == null || response.openid().isBlank()) {
-                throw new IllegalArgumentException("微信登录凭证无效"
-                        + (response.errmsg() == null ? "" : "：" + response.errmsg()));
-            }
-            return response;
-        } catch (JsonProcessingException exception) {
-            throw new IllegalStateException("微信登录响应格式无效", exception);
+        JsonNode node = wechatCall("GET", "/sns/jscode2session", Map.of(
+                "appid", appId,
+                "secret", secret,
+                "js_code", code,
+                "grant_type", "authorization_code"
+        ), null);
+        String openid = node.path("openid").asText("");
+        int errcode = node.path("errcode").asInt(0);
+        String errmsg = node.path("errmsg").asText("");
+        if (errcode != 0 || openid.isBlank()) {
+            throw new IllegalArgumentException(errmsg.isBlank() ? "微信登录凭证无效" : "微信登录凭证无效：" + errmsg);
         }
+        return new WechatSession(openid, errcode, errmsg);
     }
 
     public String accessToken() {
@@ -117,51 +116,63 @@ public class WechatAuthService {
             if (cached != null && cached.expiresAt().isAfter(Instant.now().plusSeconds(60))) {
                 return cached.value();
             }
-            String responseBody = restClient.get()
-                    .uri(uriBuilder -> uriBuilder.scheme("https").host("api.weixin.qq.com")
-                            .path("/cgi-bin/token").queryParam("appid", appId)
-                            .queryParam("secret", secret).queryParam("grant_type", "client_credential").build())
-                    .retrieve().body(String.class);
-            try {
-                WechatAccessToken response = objectMapper.readValue(responseBody, WechatAccessToken.class);
-                if ((response.errcode() != null && response.errcode() != 0)
-                        || response.accessToken() == null || response.accessToken().isBlank()) {
-                    throw new IllegalStateException("微信服务端令牌获取失败");
-                }
-                int ttl = response.expiresIn() == null || response.expiresIn() < 60 ? 7000 : response.expiresIn();
-                cachedToken = new CachedToken(response.accessToken(), Instant.now().plusSeconds(ttl));
-                return response.accessToken();
-            } catch (JsonProcessingException exception) {
-                throw new IllegalStateException("微信服务端令牌响应格式无效", exception);
+            JsonNode node = wechatCall("GET", "/cgi-bin/token", Map.of(
+                    "appid", appId,
+                    "secret", secret,
+                    "grant_type", "client_credential"
+            ), null);
+            String token = node.path("access_token").asText("");
+            int errcode = node.path("errcode").asInt(0);
+            String errmsg = node.path("errmsg").asText("");
+            if (errcode != 0 || token.isBlank()) {
+                throw new IllegalStateException(errmsg.isBlank() ? "微信服务端令牌获取失败" : "微信服务端令牌获取失败：" + errmsg);
             }
+            int ttl = node.path("expires_in").asInt(7200);
+            if (ttl < 60) ttl = 7000;
+            cachedToken = new CachedToken(token, Instant.now().plusSeconds(ttl));
+            return token;
         }
     }
 
     private String requestPhoneNumber(String accessToken, String phoneCode) {
-        String responseBody;
-        try {
-            responseBody = restClient.post()
-                    .uri("https://api.weixin.qq.com/wxa/business/getuserphonenumber?access_token={accessToken}", accessToken)
-                    .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                    .body(new PhoneCodeRequest(phoneCode))
-                    .retrieve()
-                    .body(String.class);
-        } catch (Exception exception) {
-            throw new IllegalStateException("微信手机号接口请求失败：" + exception.getMessage(), exception);
+        JsonNode node = wechatCall(
+                "POST",
+                "/wxa/business/getuserphonenumber",
+                Map.of("access_token", accessToken),
+                new PhoneCodeRequest(phoneCode)
+        );
+        int errcode = node.path("errcode").asInt(0);
+        String errmsg = node.path("errmsg").asText("");
+        String phone = node.path("phone_info").path("phoneNumber").asText("");
+        if (errcode != 0 || phone.isBlank()) {
+            throw new IllegalArgumentException(errmsg.isBlank() ? "微信手机号授权无效" : "微信手机号授权无效：" + errmsg);
         }
+        return phone;
+    }
+
+    private JsonNode wechatCall(String method, String path, Map<String, String> query, Object body) {
         try {
-            WechatPhoneResponse response = objectMapper.readValue(responseBody == null ? "{}" : responseBody, WechatPhoneResponse.class);
-            if ((response.errcode() != null && response.errcode() != 0)
-                    || response.phoneInfo() == null
-                    || response.phoneInfo().phoneNumber() == null || response.phoneInfo().phoneNumber().isBlank()) {
-                throw new IllegalArgumentException("微信手机号授权无效"
-                        + (response.errmsg() == null ? "" : "：" + response.errmsg()));
+            var spec = restClient.method(HttpMethod.valueOf(method))
+                    .uri(uriBuilder -> {
+                        var builder = uriBuilder.scheme("https").host("api.weixin.qq.com").path(path);
+                        query.forEach(builder::queryParam);
+                        return builder.build();
+                    })
+                    .accept(MediaType.APPLICATION_JSON);
+            if (body != null) {
+                spec = spec.contentType(MediaType.APPLICATION_JSON).body(body);
             }
-            return response.phoneInfo().phoneNumber();
-        } catch (IllegalArgumentException exception) {
+            return spec.exchange((request, response) -> {
+                String text = new String(response.getBody().readAllBytes(), StandardCharsets.UTF_8);
+                if (text == null || text.isBlank()) {
+                    throw new IllegalStateException("微信接口无响应");
+                }
+                return objectMapper.readTree(text);
+            });
+        } catch (IllegalArgumentException | IllegalStateException exception) {
             throw exception;
-        } catch (JsonProcessingException exception) {
-            throw new IllegalStateException("微信手机号响应格式无效", exception);
+        } catch (Exception exception) {
+            throw new IllegalStateException("微信接口请求失败：" + exception.getMessage(), exception);
         }
     }
 
@@ -184,24 +195,4 @@ public class WechatAuthService {
     }
 
     private record CachedToken(String value, Instant expiresAt) {}
-
-    private record WechatAccessToken(
-            @com.fasterxml.jackson.annotation.JsonProperty("access_token") String accessToken,
-            @com.fasterxml.jackson.annotation.JsonProperty("expires_in") Integer expiresIn,
-            Integer errcode,
-            String errmsg
-    ) {
-    }
-
-    private record WechatPhoneResponse(
-            Integer errcode,
-            String errmsg,
-            @com.fasterxml.jackson.annotation.JsonProperty("phone_info") PhoneInfo phoneInfo
-    ) {
-    }
-
-    private record PhoneInfo(
-            @com.fasterxml.jackson.annotation.JsonProperty("phoneNumber") String phoneNumber
-    ) {
-    }
 }
