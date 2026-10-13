@@ -159,7 +159,7 @@
           <h2>优惠券模板</h2>
           <button type="button" id="new-coupon-template" class="primary">新建模板</button>
         </div>
-        <p class="muted">满 0 减 X 即无门槛。每单上限是同一张券一次结算最多用几张。模板可随时改，满减金额已发到用户手里的不会跟着变，上限按当前模板生效。</p>
+        <p class="muted">满 0 减 X 即无门槛。每单上限是同一张券一次结算最多用几张。可用商品必须指定，可单选，也可按分区全选。门槛和抵扣只算这些商品。模板可随时改，满减金额已发到用户手里的不会跟着变；可用商品和每单上限按当前模板生效。</p>
         <form id="coupon-template-form" class="product-form panel hidden">
           <input type="hidden" name="id">
           <label>名称<input name="name" required placeholder="卷一"></label>
@@ -167,6 +167,11 @@
           <label>减（金额）<input name="discountAmount" type="number" min="0.01" step="0.01" required></label>
           <label>每单上限<input name="perOrderLimit" type="number" min="1" max="999" value="1" required></label>
           <label class="checkbox"><input name="active" type="checkbox" checked> 启用</label>
+          <div class="scope-box">
+            <strong>可用商品</strong>
+            <p class="muted">未勾选的商品不能用这张券，也不计入门槛。分区全选只勾选当前分区里已有的商品，之后新上架的不会自动加入。</p>
+            <div id="coupon-product-scope"></div>
+          </div>
           <div class="form-actions">
             <button type="submit" class="primary">保存模板</button>
             <button type="button" id="cancel-coupon-template" class="secondary">取消</button>

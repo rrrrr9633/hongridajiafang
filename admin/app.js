@@ -425,6 +425,47 @@ function couponLabel(item) {
   return `${item.name} · ${threshold > 0 ? `满${threshold}减${discount}` : `无门槛减${discount}`}${item.active ? '' : '（停用）'}`;
 }
 
+let couponProducts = [];
+
+function renderCouponScope(selectedIds) {
+  const box = $('#coupon-product-scope');
+  if (!box) return;
+  const selected = new Set(selectedIds || []);
+  const zones = new Map();
+  couponProducts.forEach((product) => {
+    const zone = product.zone || '未分区';
+    if (!zones.has(zone)) zones.set(zone, []);
+    zones.get(zone).push(product);
+  });
+  box.innerHTML = [...zones.entries()].map(([zone, items]) => {
+    const all = items.length > 0 && items.every((product) => selected.has(product.id));
+    return `<div class="scope-zone">
+      <label class="checkbox"><input type="checkbox" class="zone-all" data-zone="${escapeHtml(zone)}" ${all ? 'checked' : ''}> ${escapeHtml(zone)} 全选</label>
+      <div class="scope-products">${items.map((product) => `<label class="checkbox"><input type="checkbox" name="productId" value="${escapeHtml(product.id)}" data-zone="${escapeHtml(zone)}" ${selected.has(product.id) ? 'checked' : ''}> ${escapeHtml(product.name)}${product.active ? '' : '（已下架）'}</label>`).join('')}</div>
+    </div>`;
+  }).join('') || '<p class="muted">还没有商品</p>';
+  box.querySelectorAll('.zone-all').forEach((boxInput) => {
+    boxInput.onchange = () => {
+      const zone = boxInput.dataset.zone;
+      box.querySelectorAll('input[name="productId"]').forEach((input) => {
+        if (input.dataset.zone === zone) input.checked = boxInput.checked;
+      });
+    };
+  });
+  box.querySelectorAll('input[name="productId"]').forEach((input) => {
+    input.onchange = () => {
+      const zone = input.dataset.zone;
+      const peers = [...box.querySelectorAll('input[name="productId"]')].filter((item) => item.dataset.zone === zone);
+      const all = [...box.querySelectorAll('.zone-all')].find((item) => item.dataset.zone === zone);
+      if (all) all.checked = peers.every((item) => item.checked);
+    };
+  });
+}
+
+function selectedCouponProducts() {
+  return [...document.querySelectorAll('#coupon-product-scope input[name="productId"]:checked')].map((input) => input.value);
+}
+
 function fillTemplateSelect(select, templates, selectedId) {
   if (!select) return;
   select.innerHTML = `<option value="">不发放</option>${templates.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(couponLabel(item))}</option>`).join('')}`;
@@ -432,20 +473,25 @@ function fillTemplateSelect(select, templates, selectedId) {
 }
 
 async function loadCoupons() {
-  const templates = await request('/admin/coupons/templates');
-  const policy = await request('/admin/coupons/policy');
+  const [templates, policy, products] = await Promise.all([
+    request('/admin/coupons/templates'),
+    request('/admin/coupons/policy'),
+    request('/admin/products'),
+  ]);
+  couponProducts = products || [];
   const form = $('#coupon-policy-form');
   form.elements.enabled.checked = !!policy.enabled;
   fillTemplateSelect(form.elements.inviteTemplateId, templates, policy.inviteTemplateId);
   fillTemplateSelect(form.elements.purchaseTemplateId, templates, policy.purchaseTemplateId);
   form.elements.purchaseThreshold.value = policy.purchaseThreshold ?? 0;
-  $('#coupon-templates-table').innerHTML = `<table><thead><tr><th>名称</th><th>规则</th><th>每单上限</th><th>状态</th><th>操作</th></tr></thead><tbody>${(templates || []).map((item) => `<tr>
+  $('#coupon-templates-table').innerHTML = `<table><thead><tr><th>名称</th><th>规则</th><th>可用商品</th><th>每单上限</th><th>状态</th><th>操作</th></tr></thead><tbody>${(templates || []).map((item) => `<tr>
     <td>${escapeHtml(item.name)}</td>
     <td>${Number(item.thresholdAmount) > 0 ? `满 ${Number(item.thresholdAmount).toFixed(2)} 减 ${Number(item.discountAmount).toFixed(2)}` : `无门槛减 ${Number(item.discountAmount).toFixed(2)}`}</td>
+    <td>${escapeHtml(item.scopeText || '未指定')}</td>
     <td>${item.perOrderLimit || 1} 张</td>
     <td>${item.active ? '启用' : '停用'}</td>
     <td><button class="secondary edit-coupon" data-id="${item.id}">编辑</button></td>
-  </tr>`).join('') || '<tr><td colspan="5">还没有模板</td></tr>'}</tbody></table>`;
+  </tr>`).join('') || '<tr><td colspan="6">还没有模板</td></tr>'}</tbody></table>`;
   document.querySelectorAll('.edit-coupon').forEach((button) => {
     button.onclick = () => {
       const item = templates.find((row) => row.id === button.dataset.id);
@@ -458,6 +504,7 @@ async function loadCoupons() {
       templateForm.elements.discountAmount.value = item.discountAmount;
       templateForm.elements.perOrderLimit.value = item.perOrderLimit || 1;
       templateForm.elements.active.checked = !!item.active;
+      renderCouponScope(item.productIds || []);
     };
   });
 }
@@ -762,6 +809,7 @@ if ($('#new-coupon-template')) {
     form.elements.active.checked = true;
     form.elements.perOrderLimit.value = 1;
     form.classList.remove('hidden');
+    renderCouponScope([]);
   };
 }
 if ($('#cancel-coupon-template')) {
@@ -772,6 +820,12 @@ if ($('#coupon-template-form')) {
     event.preventDefault();
     const form = event.target;
     const id = (form.elements.id.value || '').trim();
+    const productIds = selectedCouponProducts();
+    if (productIds.length === 0) {
+      const error = $('#page-error');
+      if (error) error.textContent = '请至少勾选一个可用商品';
+      return;
+    }
     await request(id ? `/admin/coupons/templates/${id}` : '/admin/coupons/templates', {
       method: id ? 'PUT' : 'POST',
       body: JSON.stringify({
@@ -780,6 +834,7 @@ if ($('#coupon-template-form')) {
         discountAmount: Number(form.elements.discountAmount.value),
         perOrderLimit: Number(form.elements.perOrderLimit.value || 1),
         active: form.elements.active.checked,
+        productIds,
       }),
     });
     form.classList.add('hidden');

@@ -29,7 +29,7 @@ public class AdminCouponController {
 
     @GetMapping("/templates")
     public List<TemplateResponse> templates() {
-        return couponService.listTemplates().stream().map(TemplateResponse::from).toList();
+        return couponService.listTemplates().stream().map(template -> TemplateResponse.from(template, couponService)).toList();
     }
 
     @PostMapping("/templates")
@@ -40,8 +40,9 @@ public class AdminCouponController {
                     request == null ? null : request.thresholdAmount(),
                     request == null ? null : request.discountAmount(),
                     request == null || request.active() == null || request.active(),
-                    request == null || request.perOrderLimit() == null ? 1 : request.perOrderLimit()
-            ));
+                    request == null || request.perOrderLimit() == null ? 1 : request.perOrderLimit(),
+                    request == null ? List.of() : request.productIds()
+            ), couponService);
         } catch (IllegalArgumentException exception) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, exception.getMessage(), exception);
         }
@@ -56,8 +57,9 @@ public class AdminCouponController {
                     request == null ? null : request.thresholdAmount(),
                     request == null ? null : request.discountAmount(),
                     request == null || request.active() == null || request.active(),
-                    request == null || request.perOrderLimit() == null ? 1 : request.perOrderLimit()
-            ));
+                    request == null || request.perOrderLimit() == null ? 1 : request.perOrderLimit(),
+                    request == null ? List.of() : request.productIds()
+            ), couponService);
         } catch (IllegalArgumentException exception) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, exception.getMessage(), exception);
         }
@@ -82,7 +84,7 @@ public class AdminCouponController {
         }
     }
 
-    public record TemplateRequest(String name, BigDecimal thresholdAmount, BigDecimal discountAmount, Boolean active, Integer perOrderLimit) {}
+    public record TemplateRequest(String name, BigDecimal thresholdAmount, BigDecimal discountAmount, Boolean active, Integer perOrderLimit, List<String> productIds) {}
     public record PolicyRequest(Boolean enabled, UUID inviteTemplateId, UUID purchaseTemplateId, BigDecimal purchaseThreshold) {}
 
     public record TemplateResponse(
@@ -92,9 +94,12 @@ public class AdminCouponController {
             BigDecimal discountAmount,
             int perOrderLimit,
             boolean active,
+            List<String> productIds,
+            String scopeText,
             Instant createdAt
     ) {
-        static TemplateResponse from(CouponTemplate template) {
+        static TemplateResponse from(CouponTemplate template, CouponService couponService) {
+            List<String> productIds = couponService.productIds(template.getId());
             return new TemplateResponse(
                     template.getId(),
                     template.getName(),
@@ -102,6 +107,8 @@ public class AdminCouponController {
                     template.getDiscountAmount(),
                     template.getPerOrderLimit(),
                     template.isActive(),
+                    productIds,
+                    couponService.scopeText(template.getId()),
                     template.getCreatedAt()
             );
         }

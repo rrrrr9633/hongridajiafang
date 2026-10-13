@@ -55,9 +55,10 @@ public class CouponController {
             BigDecimal discountAmount,
             String source,
             String status,
+            String scopeText,
             Instant createdAt
     ) {
-        static CouponView from(UserCoupon coupon) {
+        static CouponView from(UserCoupon coupon, CouponService couponService) {
             return new CouponView(
                     coupon.getId(),
                     coupon.getTemplateId(),
@@ -66,6 +67,7 @@ public class CouponController {
                     coupon.getDiscountAmount(),
                     coupon.getSource().name(),
                     coupon.getStatus().name(),
+                    couponService.scopeText(coupon.getTemplateId()),
                     coupon.getCreatedAt()
             );
         }
@@ -111,7 +113,7 @@ public class CouponController {
                     wallet.user().hasInviter(),
                     wallet.inviter() == null ? null : wallet.inviter().getInviteCode(),
                     PolicyView.from(wallet.policy(), couponService),
-                    wallet.coupons().stream().map(CouponView::from).toList()
+                    wallet.coupons().stream().map(coupon -> CouponView.from(coupon, couponService)).toList()
             );
         }
     }

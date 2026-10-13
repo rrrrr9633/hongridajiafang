@@ -12,7 +12,7 @@
 
 复制 `.env.example` 为本地环境文件，或在启动进程前导入同名环境变量。真实 `.env` 不提交到仓库。
 
-生产域名由部署环境单独配置，禁止把中文域名直接写进程序。`小漾sama.top` 的标准 Punycode 是 `xn--sama-px9gg69g.top`；本地开发环境不依赖生产域名，统一使用 `http://127.0.0.1:8080`。域名证书、微信 AppID/Secret、数据库密码、Redis 密码和支付证书只通过环境变量注入。
+生产域名是 `hongridajiafang.shop`，公网 IP 是 `211.101.233.24`。小程序只连 `https://hongridajiafang.shop`，不要写裸 IP。本地开发不依赖生产域名，统一使用 `http://127.0.0.1:8080`。域名证书、微信 AppID/Secret、数据库密码、Redis 密码和支付证书只通过环境变量注入。
 
 ## 订单与支付状态
 
