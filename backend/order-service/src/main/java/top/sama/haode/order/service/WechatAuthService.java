@@ -161,10 +161,7 @@ public class WechatAuthService {
             var uriBuilder = UriComponentsBuilder.fromUriString("https://api.weixin.qq.com" + path);
             query.forEach(uriBuilder::queryParam);
             URI uri = uriBuilder.encode().build().toUri();
-            var spec = restClient.method(HttpMethod.valueOf(method))
-                    .uri(uri)
-                    .header("User-Agent", "Mozilla/5.0")
-                    .header("Accept", "*/*");
+            var spec = restClient.method(HttpMethod.valueOf(method)).uri(uri);
             if (body != null) {
                 spec = spec.contentType(MediaType.APPLICATION_JSON).body(body);
             }
