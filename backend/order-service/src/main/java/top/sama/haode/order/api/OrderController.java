@@ -158,7 +158,9 @@ public class OrderController {
             int availableCount,
             int selectedCount,
             BigDecimal eligibleAmount,
-            String scopeText
+            String scopeText,
+            boolean canAdd,
+            String blockText
     ) {
         static CouponOption from(CouponService.CouponGroup group) {
             return new CouponOption(
@@ -170,7 +172,9 @@ public class OrderController {
                     group.availableCount(),
                     group.selectedCount(),
                     group.eligibleAmount(),
-                    group.scopeText()
+                    group.scopeText(),
+                    group.canAdd(),
+                    group.blockText()
             );
         }
     }
@@ -184,7 +188,8 @@ public class OrderController {
             String status,
             AddressView address,
             List<OrderResponse> orders,
-            List<CouponOption> availableCoupons
+            List<CouponOption> availableCoupons,
+            String couponRuleText
     ) {}
 
     public record AddressView(
@@ -227,7 +232,8 @@ public class OrderController {
                 checkout.getStatus().name(),
                 AddressView.from(checkout),
                 orders.stream().map(OrderResponse::from).toList(),
-                couponService.availableGroups(userId, orders, checkout.getId()).stream().map(CouponOption::from).toList()
+                couponService.availableGroups(userId, orders, checkout.getId()).stream().map(CouponOption::from).toList(),
+                couponService.ruleText(orders)
         );
     }
 

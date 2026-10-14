@@ -159,25 +159,47 @@
           <h2>优惠券模板</h2>
           <button type="button" id="new-coupon-template" class="primary">新建模板</button>
         </div>
-        <p class="muted">满 0 减 X 即无门槛。每单上限是同一张券一次结算最多用几张。可用商品必须指定，可单选，也可按分区全选。门槛和抵扣只算这些商品。模板可随时改，满减金额已发到用户手里的不会跟着变；可用商品和每单上限按当前模板生效。</p>
+        <p class="muted">满 0 减 X 即无门槛。券本身只定义面额和门槛。哪些商品能用、一单能用哪几种组合，在下面的用券规则里设置。已发到用户手里的面额不会跟着模板改。</p>
         <form id="coupon-template-form" class="product-form panel hidden">
           <input type="hidden" name="id">
-          <label>名称<input name="name" required placeholder="卷一"></label>
+          <label>名称<input name="name" required placeholder="五元券"></label>
           <label>满（门槛）<input name="thresholdAmount" type="number" min="0" step="0.01" required></label>
           <label>减（金额）<input name="discountAmount" type="number" min="0.01" step="0.01" required></label>
-          <label>每单上限<input name="perOrderLimit" type="number" min="1" max="999" value="1" required></label>
           <label class="checkbox"><input name="active" type="checkbox" checked> 启用</label>
-          <div class="scope-box">
-            <strong>可用商品</strong>
-            <p class="muted">未勾选的商品不能用这张券，也不计入门槛。分区全选只勾选当前分区里已有的商品，之后新上架的不会自动加入。</p>
-            <div id="coupon-product-scope"></div>
-          </div>
           <div class="form-actions">
             <button type="submit" class="primary">保存模板</button>
             <button type="button" id="cancel-coupon-template" class="secondary">取消</button>
           </div>
         </form>
         <div id="coupon-templates-table" class="table-wrap"></div>
+        <div class="toolbar" style="margin-top:28px">
+          <h2>用券规则</h2>
+          <button type="button" id="new-coupon-rule" class="primary">新建规则</button>
+        </div>
+        <p class="muted">勾选分区和指定商品，再添加几种用法。一种用法里可以多张、多种券。结算只执行命中商品里优先级数字最小的规则；数字相同只能满足其中一条，不能叠加。用法也是二选一，用得更少可以。</p>
+        <form id="coupon-rule-form" class="product-form panel hidden">
+          <input type="hidden" name="id">
+          <label>名称<input name="name" required placeholder="床品区+指定袜子"></label>
+          <label>优先级<input name="priority" type="number" min="1" max="999" value="1" required>
+            <span class="muted">数字越小越优先。1 会盖过 2。</span>
+          </label>
+          <div class="scope-box">
+            <strong>商品范围</strong>
+            <p class="muted">分区包含现在和以后上架到该分区的商品。指定商品用来把别的分区里的单品加进来，例如几双袜子。</p>
+            <div id="coupon-rule-scope"></div>
+          </div>
+          <div class="scope-box">
+            <strong>用法</strong>
+            <p class="muted">每种用法单独成立。例如「1 张 10 元券」或「3 张 5 元券」或「1 张 5 元券 + 1 张 10 元券」要分成三种用法，不要写在同一种里。</p>
+            <div id="coupon-rule-options"></div>
+            <button type="button" id="add-coupon-option" class="secondary">添加一种用法</button>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="primary">保存规则</button>
+            <button type="button" id="cancel-coupon-rule" class="secondary">取消</button>
+          </div>
+        </form>
+        <div id="coupon-rules-table" class="table-wrap"></div>
       </section>
       <section id="announcements" class="section">
         <div class="toolbar">

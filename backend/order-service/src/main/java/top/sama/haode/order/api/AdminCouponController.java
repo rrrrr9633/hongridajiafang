@@ -1,15 +1,18 @@
 package top.sama.haode.order.api;
 
 import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 import top.sama.haode.order.application.CouponService;
+import top.sama.haode.order.application.CouponUsageRules;
 import top.sama.haode.order.domain.CouponPolicy;
 import top.sama.haode.order.domain.CouponTemplate;
 
@@ -22,9 +25,11 @@ import java.util.UUID;
 @RequestMapping("/api/admin/coupons")
 public class AdminCouponController {
     private final CouponService couponService;
+    private final CouponUsageRules usageRules;
 
-    public AdminCouponController(CouponService couponService) {
+    public AdminCouponController(CouponService couponService, CouponUsageRules usageRules) {
         this.couponService = couponService;
+        this.usageRules = usageRules;
     }
 
     @GetMapping("/templates")
@@ -39,9 +44,7 @@ public class AdminCouponController {
                     request == null ? null : request.name(),
                     request == null ? null : request.thresholdAmount(),
                     request == null ? null : request.discountAmount(),
-                    request == null || request.active() == null || request.active(),
-                    request == null || request.perOrderLimit() == null ? 1 : request.perOrderLimit(),
-                    request == null ? List.of() : request.productIds()
+                    request == null || request.active() == null || request.active()
             ), couponService);
         } catch (IllegalArgumentException exception) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, exception.getMessage(), exception);
@@ -56,14 +59,62 @@ public class AdminCouponController {
                     request == null ? null : request.name(),
                     request == null ? null : request.thresholdAmount(),
                     request == null ? null : request.discountAmount(),
-                    request == null || request.active() == null || request.active(),
-                    request == null || request.perOrderLimit() == null ? 1 : request.perOrderLimit(),
-                    request == null ? List.of() : request.productIds()
+                    request == null || request.active() == null || request.active()
             ), couponService);
         } catch (IllegalArgumentException exception) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, exception.getMessage(), exception);
         }
     }
+
+    @GetMapping("/rules")
+    public List<CouponUsageRules.RuleView> rules() {
+        return usageRules.list();
+    }
+
+    @PostMapping("/rules")
+    public CouponUsageRules.RuleView createRule(@RequestBody RuleRequest request) {
+        return saveRule(null, request);
+    }
+
+    @PutMapping("/rules/{id}")
+    public CouponUsageRules.RuleView updateRule(@PathVariable UUID id, @RequestBody RuleRequest request) {
+        return saveRule(id, request);
+    }
+
+    @DeleteMapping("/rules/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteRule(@PathVariable UUID id) {
+        try {
+            usageRules.delete(id);
+        } catch (IllegalArgumentException exception) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, exception.getMessage(), exception);
+        }
+    }
+
+    private CouponUsageRules.RuleView saveRule(UUID id, RuleRequest request) {
+        try {
+            return usageRules.save(
+                    id,
+                    request == null ? null : request.name(),
+                    request == null ? null : request.priority(),
+                    request == null ? List.of() : request.zones(),
+                    request == null ? List.of() : request.productIds(),
+                    request == null || request.options() == null ? List.of() : request.options().stream()
+                            .map(option -> new CouponUsageRules.OptionDraft(
+                                    option == null || option.items() == null ? List.of() : option.items().stream()
+                                            .map(item -> new CouponUsageRules.ItemDraft(item == null ? null : item.templateId(), item == null ? 0 : item.quantity()))
+                                            .toList()
+                            ))
+                            .toList()
+            );
+        } catch (IllegalArgumentException exception) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, exception.getMessage(), exception);
+        }
+    }
+
+    public record RuleItemRequest(UUID templateId, int quantity) {}
+    public record RuleOptionRequest(List<RuleItemRequest> items) {}
+    public record RuleRequest(String name, Integer priority, List<String> zones, List<String> productIds, List<RuleOptionRequest> options) {}
 
     @GetMapping("/policy")
     public PolicyResponse policy() {

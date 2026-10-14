@@ -426,44 +426,96 @@ function couponLabel(item) {
 }
 
 let couponProducts = [];
+let couponTemplates = [];
+let couponRules = [];
+let ruleDraft = blankRule();
 
-function renderCouponScope(selectedIds) {
-  const box = $('#coupon-product-scope');
+function blankRule() {
+  return { zones: [], productIds: [], options: [{ items: [{ templateId: '', quantity: 1 }] }] };
+}
+
+function ruleOptionText(option) {
+  return (option.items || []).map((item) => {
+    const template = couponTemplates.find((row) => row.id === item.templateId);
+    return `${item.quantity} 张${template ? template.name : '券'}`;
+  }).join(' + ');
+}
+
+function renderRuleScope() {
+  const box = $('#coupon-rule-scope');
   if (!box) return;
-  const selected = new Set(selectedIds || []);
   const zones = new Map();
   couponProducts.forEach((product) => {
     const zone = product.zone || '未分区';
     if (!zones.has(zone)) zones.set(zone, []);
     zones.get(zone).push(product);
   });
-  box.innerHTML = [...zones.entries()].map(([zone, items]) => {
-    const all = items.length > 0 && items.every((product) => selected.has(product.id));
-    return `<div class="scope-zone">
-      <label class="checkbox"><input type="checkbox" class="zone-all" data-zone="${escapeHtml(zone)}" ${all ? 'checked' : ''}> ${escapeHtml(zone)} 全选</label>
-      <div class="scope-products">${items.map((product) => `<label class="checkbox"><input type="checkbox" name="productId" value="${escapeHtml(product.id)}" data-zone="${escapeHtml(zone)}" ${selected.has(product.id) ? 'checked' : ''}> ${escapeHtml(product.name)}${product.active ? '' : '（已下架）'}</label>`).join('')}</div>
-    </div>`;
-  }).join('') || '<p class="muted">还没有商品</p>';
-  box.querySelectorAll('.zone-all').forEach((boxInput) => {
-    boxInput.onchange = () => {
-      const zone = boxInput.dataset.zone;
-      box.querySelectorAll('input[name="productId"]').forEach((input) => {
-        if (input.dataset.zone === zone) input.checked = boxInput.checked;
-      });
+  const selectedZones = new Set(ruleDraft.zones);
+  const selectedProducts = new Set(ruleDraft.productIds);
+  box.innerHTML = [...zones.entries()].map(([zone, items]) => `<div class="scope-zone">
+      <label class="checkbox"><input type="checkbox" name="ruleZone" value="${escapeHtml(zone)}" ${selectedZones.has(zone) ? 'checked' : ''}> ${escapeHtml(zone)}</label>
+      <div class="scope-products">${items.map((product) => `<label class="checkbox"><input type="checkbox" name="ruleProductId" value="${escapeHtml(product.id)}" ${selectedProducts.has(product.id) ? 'checked' : ''}> ${escapeHtml(product.name)}${product.active ? '' : '（已下架）'}${selectedZones.has(zone) ? '（分区已包含）' : ''}</label>`).join('')}</div>
+    </div>`).join('') || '<p class="muted">还没有商品</p>';
+}
+
+function renderRuleOptions() {
+  const box = $('#coupon-rule-options');
+  if (!box) return;
+  const choices = couponTemplates.filter((item) => item.active).map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(couponLabel(item))}</option>`).join('');
+  box.innerHTML = ruleDraft.options.map((option, optionIndex) => `<div class="rule-option">
+      <strong>用法 ${optionIndex + 1}</strong>
+      ${(option.items || []).map((item, itemIndex) => `<div class="rule-item">
+        <select data-option="${optionIndex}" data-item="${itemIndex}">
+          <option value="">选择优惠券</option>${choices}
+        </select>
+        <input data-qty="${optionIndex}" data-item="${itemIndex}" type="number" min="1" max="99" value="${item.quantity || 1}">
+        <button type="button" class="secondary remove-rule-item" data-option="${optionIndex}" data-item="${itemIndex}">移除</button>
+      </div>`).join('')}
+      <button type="button" class="secondary add-rule-item" data-option="${optionIndex}">加一种券</button>
+      ${ruleDraft.options.length > 1 ? `<button type="button" class="secondary remove-rule-option" data-option="${optionIndex}">删除这种用法</button>` : ''}
+    </div>`).join('');
+  box.querySelectorAll('select[data-option]').forEach((select) => {
+    select.value = ruleDraft.options[select.dataset.option].items[select.dataset.item].templateId || '';
+    select.onchange = () => { ruleDraft.options[select.dataset.option].items[select.dataset.item].templateId = select.value; };
+  });
+  box.querySelectorAll('input[data-qty]').forEach((input) => {
+    input.onchange = () => { ruleDraft.options[input.dataset.option].items[input.dataset.item].quantity = Number(input.value || 1); };
+  });
+  box.querySelectorAll('.add-rule-item').forEach((button) => {
+    button.onclick = () => {
+      ruleDraft.options[button.dataset.option].items.push({ templateId: '', quantity: 1 });
+      renderRuleOptions();
     };
   });
-  box.querySelectorAll('input[name="productId"]').forEach((input) => {
-    input.onchange = () => {
-      const zone = input.dataset.zone;
-      const peers = [...box.querySelectorAll('input[name="productId"]')].filter((item) => item.dataset.zone === zone);
-      const all = [...box.querySelectorAll('.zone-all')].find((item) => item.dataset.zone === zone);
-      if (all) all.checked = peers.every((item) => item.checked);
+  box.querySelectorAll('.remove-rule-item').forEach((button) => {
+    button.onclick = () => {
+      const items = ruleDraft.options[button.dataset.option].items;
+      if (items.length === 1) return;
+      items.splice(Number(button.dataset.item), 1);
+      renderRuleOptions();
+    };
+  });
+  box.querySelectorAll('.remove-rule-option').forEach((button) => {
+    button.onclick = () => {
+      ruleDraft.options.splice(Number(button.dataset.option), 1);
+      renderRuleOptions();
     };
   });
 }
 
-function selectedCouponProducts() {
-  return [...document.querySelectorAll('#coupon-product-scope input[name="productId"]:checked')].map((input) => input.value);
+function openRule(rule) {
+  ruleDraft = rule ? {
+    zones: [...(rule.zones || [])],
+    productIds: [...(rule.productIds || [])],
+    options: (rule.options || []).map((option) => ({ items: (option.items || []).map((item) => ({ ...item })) })),
+  } : blankRule();
+  const form = $('#coupon-rule-form');
+  form.classList.remove('hidden');
+  form.elements.id.value = rule ? rule.id : '';
+  form.elements.name.value = rule ? rule.name : '';
+  form.elements.priority.value = rule ? rule.priority : 1;
+  renderRuleScope();
+  renderRuleOptions();
 }
 
 function fillTemplateSelect(select, templates, selectedId) {
@@ -473,28 +525,29 @@ function fillTemplateSelect(select, templates, selectedId) {
 }
 
 async function loadCoupons() {
-  const [templates, policy, products] = await Promise.all([
+  const [templates, policy, products, rules] = await Promise.all([
     request('/admin/coupons/templates'),
     request('/admin/coupons/policy'),
     request('/admin/products'),
+    request('/admin/coupons/rules'),
   ]);
   couponProducts = products || [];
+  couponTemplates = templates || [];
+  couponRules = rules || [];
   const form = $('#coupon-policy-form');
   form.elements.enabled.checked = !!policy.enabled;
-  fillTemplateSelect(form.elements.inviteTemplateId, templates, policy.inviteTemplateId);
-  fillTemplateSelect(form.elements.purchaseTemplateId, templates, policy.purchaseTemplateId);
+  fillTemplateSelect(form.elements.inviteTemplateId, couponTemplates, policy.inviteTemplateId);
+  fillTemplateSelect(form.elements.purchaseTemplateId, couponTemplates, policy.purchaseTemplateId);
   form.elements.purchaseThreshold.value = policy.purchaseThreshold ?? 0;
-  $('#coupon-templates-table').innerHTML = `<table><thead><tr><th>名称</th><th>规则</th><th>可用商品</th><th>每单上限</th><th>状态</th><th>操作</th></tr></thead><tbody>${(templates || []).map((item) => `<tr>
+  $('#coupon-templates-table').innerHTML = `<table><thead><tr><th>名称</th><th>面额</th><th>状态</th><th>操作</th></tr></thead><tbody>${couponTemplates.map((item) => `<tr>
     <td>${escapeHtml(item.name)}</td>
     <td>${Number(item.thresholdAmount) > 0 ? `满 ${Number(item.thresholdAmount).toFixed(2)} 减 ${Number(item.discountAmount).toFixed(2)}` : `无门槛减 ${Number(item.discountAmount).toFixed(2)}`}</td>
-    <td>${escapeHtml(item.scopeText || '未指定')}</td>
-    <td>${item.perOrderLimit || 1} 张</td>
     <td>${item.active ? '启用' : '停用'}</td>
     <td><button class="secondary edit-coupon" data-id="${item.id}">编辑</button></td>
-  </tr>`).join('') || '<tr><td colspan="6">还没有模板</td></tr>'}</tbody></table>`;
+  </tr>`).join('') || '<tr><td colspan="4">还没有模板</td></tr>'}</tbody></table>`;
   document.querySelectorAll('.edit-coupon').forEach((button) => {
     button.onclick = () => {
-      const item = templates.find((row) => row.id === button.dataset.id);
+      const item = couponTemplates.find((row) => row.id === button.dataset.id);
       if (!item) return;
       const templateForm = $('#coupon-template-form');
       templateForm.classList.remove('hidden');
@@ -502,9 +555,24 @@ async function loadCoupons() {
       templateForm.elements.name.value = item.name;
       templateForm.elements.thresholdAmount.value = item.thresholdAmount;
       templateForm.elements.discountAmount.value = item.discountAmount;
-      templateForm.elements.perOrderLimit.value = item.perOrderLimit || 1;
       templateForm.elements.active.checked = !!item.active;
-      renderCouponScope(item.productIds || []);
+    };
+  });
+  $('#coupon-rules-table').innerHTML = `<table><thead><tr><th>优先级</th><th>名称</th><th>范围</th><th>用法</th><th>操作</th></tr></thead><tbody>${couponRules.map((rule) => `<tr>
+    <td>${rule.priority}</td>
+    <td>${escapeHtml(rule.name)}</td>
+    <td>${escapeHtml([...(rule.zones || []), ...((rule.productIds || []).map((id) => (couponProducts.find((product) => product.id === id) || {}).name || id))].join('、') || '未设置')}</td>
+    <td>${escapeHtml((rule.options || []).map(ruleOptionText).join('，或'))}</td>
+    <td><button class="secondary edit-rule" data-id="${rule.id}">编辑</button> <button class="secondary delete-rule" data-id="${rule.id}">删除</button></td>
+  </tr>`).join('') || '<tr><td colspan="5">还没有规则，结算时不能用券</td></tr>'}</tbody></table>`;
+  document.querySelectorAll('.edit-rule').forEach((button) => {
+    button.onclick = () => openRule(couponRules.find((rule) => rule.id === button.dataset.id));
+  });
+  document.querySelectorAll('.delete-rule').forEach((button) => {
+    button.onclick = async () => {
+      if (!confirm('删除这条用券规则？')) return;
+      await request(`/admin/coupons/rules/${button.dataset.id}`, { method: 'DELETE' });
+      loadCoupons();
     };
   });
 }
@@ -807,9 +875,7 @@ if ($('#new-coupon-template')) {
     form.reset();
     form.elements.id.value = '';
     form.elements.active.checked = true;
-    form.elements.perOrderLimit.value = 1;
     form.classList.remove('hidden');
-    renderCouponScope([]);
   };
 }
 if ($('#cancel-coupon-template')) {
@@ -820,25 +886,49 @@ if ($('#coupon-template-form')) {
     event.preventDefault();
     const form = event.target;
     const id = (form.elements.id.value || '').trim();
-    const productIds = selectedCouponProducts();
-    if (productIds.length === 0) {
-      const error = $('#page-error');
-      if (error) error.textContent = '请至少勾选一个可用商品';
-      return;
-    }
     await request(id ? `/admin/coupons/templates/${id}` : '/admin/coupons/templates', {
       method: id ? 'PUT' : 'POST',
       body: JSON.stringify({
         name: form.elements.name.value.trim(),
         thresholdAmount: Number(form.elements.thresholdAmount.value),
         discountAmount: Number(form.elements.discountAmount.value),
-        perOrderLimit: Number(form.elements.perOrderLimit.value || 1),
         active: form.elements.active.checked,
-        productIds,
       }),
     });
     form.classList.add('hidden');
     loadCoupons();
+  };
+}
+if ($('#new-coupon-rule')) $('#new-coupon-rule').onclick = () => openRule(null);
+if ($('#cancel-coupon-rule')) $('#cancel-coupon-rule').onclick = () => $('#coupon-rule-form').classList.add('hidden');
+if ($('#add-coupon-option')) {
+  $('#add-coupon-option').onclick = () => {
+    ruleDraft.options.push({ items: [{ templateId: '', quantity: 1 }] });
+    renderRuleOptions();
+  };
+}
+if ($('#coupon-rule-form')) {
+  $('#coupon-rule-form').onsubmit = async (event) => {
+    event.preventDefault();
+    const form = event.target;
+    const error = $('#page-error');
+    const id = (form.elements.id.value || '').trim();
+    const zones = [...document.querySelectorAll('#coupon-rule-scope input[name="ruleZone"]:checked')].map((input) => input.value);
+    const productIds = [...document.querySelectorAll('#coupon-rule-scope input[name="ruleProductId"]:checked')].map((input) => input.value);
+    const options = ruleDraft.options.map((option) => ({
+      items: (option.items || []).filter((item) => item.templateId).map((item) => ({ templateId: item.templateId, quantity: Number(item.quantity || 1) })),
+    })).filter((option) => option.items.length > 0);
+    try {
+      await request(id ? `/admin/coupons/rules/${id}` : '/admin/coupons/rules', {
+        method: id ? 'PUT' : 'POST',
+        body: JSON.stringify({ name: form.elements.name.value.trim(), priority: Number(form.elements.priority.value), zones, productIds, options }),
+      });
+      form.classList.add('hidden');
+      if (error) error.textContent = '';
+      loadCoupons();
+    } catch (err) {
+      if (error) error.textContent = err.message;
+    }
   };
 }
 if ($('#new-announcement')) {

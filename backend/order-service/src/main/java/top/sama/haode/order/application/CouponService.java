@@ -23,11 +23,9 @@ import top.sama.haode.order.repository.UserRepository;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -45,6 +43,7 @@ public class CouponService {
     private final PaymentRepository payments;
     private final OrderRepository orders;
     private final CouponProductScope productScope;
+    private final CouponUsageRules usageRules;
 
     public CouponService(
             CouponTemplateRepository templates,
@@ -55,7 +54,8 @@ public class CouponService {
             CheckoutRepository checkouts,
             PaymentRepository payments,
             OrderRepository orders,
-            CouponProductScope productScope
+            CouponProductScope productScope,
+            CouponUsageRules usageRules
     ) {
         this.templates = templates;
         this.policies = policies;
@@ -66,6 +66,7 @@ public class CouponService {
         this.payments = payments;
         this.orders = orders;
         this.productScope = productScope;
+        this.usageRules = usageRules;
     }
 
     @Transactional
@@ -79,17 +80,14 @@ public class CouponService {
     }
 
     @Transactional
-    public CouponTemplate createTemplate(String name, BigDecimal threshold, BigDecimal discount, boolean active, int perOrderLimit, List<String> productIds) {
-        CouponTemplate template = templates.save(new CouponTemplate(name, threshold, discount, active, perOrderLimit));
-        productScope.replace(template.getId(), productIds);
-        return template;
+    public CouponTemplate createTemplate(String name, BigDecimal threshold, BigDecimal discount, boolean active) {
+        return templates.save(new CouponTemplate(name, threshold, discount, active, 1));
     }
 
     @Transactional
-    public CouponTemplate updateTemplate(UUID id, String name, BigDecimal threshold, BigDecimal discount, boolean active, int perOrderLimit, List<String> productIds) {
+    public CouponTemplate updateTemplate(UUID id, String name, BigDecimal threshold, BigDecimal discount, boolean active) {
         CouponTemplate template = templates.findById(id).orElseThrow(() -> new IllegalArgumentException("优惠券模板不存在"));
-        template.replace(name, threshold, discount, active, perOrderLimit);
-        productScope.replace(id, productIds);
+        template.replace(name, threshold, discount, active, 1);
         return template;
     }
 
@@ -155,42 +153,39 @@ public class CouponService {
     public void applyToCheckout(Checkout checkout, String userId, List<Selection> selections) {
         if (checkout.getStatus() != OrderStatus.PENDING_PAYMENT) throw new IllegalStateException("结算单当前状态不可用券");
         releaseCheckout(checkout);
-        if (selections == null || selections.isEmpty()) return;
+        Map<UUID, Integer> requested = new LinkedHashMap<>();
+        if (selections != null) {
+            for (Selection selection : selections) {
+                if (selection == null || selection.templateId() == null || selection.quantity() <= 0) continue;
+                requested.merge(selection.templateId(), selection.quantity(), Integer::sum);
+            }
+        }
+        if (requested.isEmpty()) return;
+        List<Order> lines = orders.findByCheckoutIdOrderByCreatedAtAsc(checkout.getId());
+        CouponUsageRules.Decision decision = usageRules.decide(lines);
+        if (!decision.fits(requested)) throw new IllegalStateException(decision.rejection());
+        BigDecimal goods = decision.goodsAmount();
         List<UserCoupon> locked = new ArrayList<>();
         BigDecimal totalDiscount = BigDecimal.ZERO;
-        Set<String> coveredProducts = new HashSet<>();
-        List<Order> lines = orders.findByCheckoutIdOrderByCreatedAtAsc(checkout.getId());
-        for (Selection selection : selections) {
-            if (selection == null || selection.templateId() == null || selection.quantity() <= 0) continue;
-            CouponTemplate template = requireTemplate(selection.templateId());
-            if (selection.quantity() > template.getPerOrderLimit()) {
-                throw new IllegalStateException(template.getName() + " 每单最多使用 " + template.getPerOrderLimit() + " 张");
-            }
-            List<String> allowed = productScope.productIds(template.getId());
-            if (allowed.isEmpty()) throw new IllegalStateException(template.getName() + " 未指定可用商品");
-            BigDecimal eligible = productScope.eligibleAmount(allowed, lines);
-            BigDecimal piece = template.getDiscountAmount().multiply(BigDecimal.valueOf(selection.quantity()));
-            if (eligible.compareTo(template.getThresholdAmount()) < 0 || eligible.compareTo(piece) <= 0) {
-                throw new IllegalStateException(template.getName() + " 只能用于指定商品，当前指定商品金额不足");
-            }
+        for (Map.Entry<UUID, Integer> entry : requested.entrySet()) {
+            CouponTemplate template = requireTemplate(entry.getKey());
             List<UserCoupon> unused = userCoupons
                     .findByUserIdAndTemplateIdAndStatusOrderByCreatedAtAsc(userId, template.getId(), UserCoupon.Status.UNUSED)
                     .stream()
-                    .filter(coupon -> coupon.usableFor(eligible))
+                    .filter(coupon -> coupon.usableFor(goods))
                     .toList();
-            if (selection.quantity() > unused.size()) {
-                throw new IllegalStateException(template.getName() + " 可用数量不足");
+            if (entry.getValue() > unused.size()) throw new IllegalStateException(template.getName() + " 可用数量不足");
+            BigDecimal piece = BigDecimal.ZERO;
+            for (int i = 0; i < entry.getValue(); i++) piece = piece.add(unused.get(i).getDiscountAmount());
+            if (goods.compareTo(template.getThresholdAmount()) < 0 || goods.subtract(totalDiscount.add(piece)).signum() <= 0) {
+                throw new IllegalStateException(template.getName() + " 未达到整单门槛，或优惠后金额不足");
             }
-            for (int i = 0; i < selection.quantity(); i++) {
+            for (int i = 0; i < entry.getValue(); i++) {
                 UserCoupon coupon = unused.get(i);
                 coupon.lock(checkout.getId());
                 locked.add(coupon);
                 totalDiscount = totalDiscount.add(coupon.getDiscountAmount());
             }
-            coveredProducts.addAll(allowed);
-        }
-        if (totalDiscount.compareTo(productScope.unionAmount(coveredProducts, lines)) > 0) {
-            throw new IllegalStateException("优惠超过指定商品金额，请减少用券");
         }
         checkout.applyDiscount(totalDiscount);
         checkout.rememberCoupon(locked.isEmpty() ? null : locked.get(0).getId());
@@ -234,43 +229,52 @@ public class CouponService {
     }
 
     public List<CouponGroup> availableGroups(String userId, List<Order> lines, UUID checkoutId) {
+        CouponUsageRules.Decision decision = usageRules.decide(lines);
         Map<UUID, Integer> selected = new LinkedHashMap<>();
+        BigDecimal selectedDiscount = BigDecimal.ZERO;
         if (checkoutId != null) {
-            userCoupons.findByCheckoutId(checkoutId).stream()
-                    .filter(coupon -> coupon.getStatus() == UserCoupon.Status.LOCKED || coupon.getStatus() == UserCoupon.Status.USED)
-                    .forEach(coupon -> selected.merge(coupon.getTemplateId(), 1, Integer::sum));
+            for (UserCoupon coupon : userCoupons.findByCheckoutId(checkoutId)) {
+                if (coupon.getStatus() != UserCoupon.Status.LOCKED && coupon.getStatus() != UserCoupon.Status.USED) continue;
+                if (coupon.getTemplateId() == null) continue;
+                selected.merge(coupon.getTemplateId(), 1, Integer::sum);
+                selectedDiscount = selectedDiscount.add(coupon.getDiscountAmount());
+            }
         }
-        List<UserCoupon> owned = userCoupons.findByUserIdOrderByCreatedAtDesc(userId);
-        Map<UUID, List<String>> scopes = productScope.productIds(owned.stream().map(UserCoupon::getTemplateId).filter(id -> id != null).distinct().toList());
         Map<UUID, CouponGroup> groups = new LinkedHashMap<>();
-        for (UserCoupon coupon : owned) {
+        for (UserCoupon coupon : userCoupons.findByUserIdOrderByCreatedAtDesc(userId)) {
             UUID templateId = coupon.getTemplateId();
             if (templateId == null) continue;
-            List<String> allowed = scopes.getOrDefault(templateId, List.of());
-            BigDecimal eligible = productScope.eligibleAmount(allowed, lines);
             boolean onThisCheckout = checkoutId != null && checkoutId.equals(coupon.getCheckoutId())
                     && (coupon.getStatus() == UserCoupon.Status.LOCKED || coupon.getStatus() == UserCoupon.Status.USED);
-            boolean counted = coupon.usableFor(eligible) || onThisCheckout;
-            if (!counted) continue;
+            boolean usable = coupon.usableFor(decision.goodsAmount());
+            if (coupon.getStatus() != UserCoupon.Status.UNUSED && !onThisCheckout) continue;
             CouponGroup current = groups.get(templateId);
+            int stock = usable || onThisCheckout ? 1 : 0;
             if (current == null) {
-                int limit = templates.findById(templateId).map(CouponTemplate::getPerOrderLimit).orElse(1);
                 groups.put(templateId, new CouponGroup(
                         templateId,
                         coupon.getName(),
                         coupon.getThresholdAmount(),
                         coupon.getDiscountAmount(),
-                        limit,
-                        1,
+                        decision.maxOf(templateId),
+                        stock,
                         selected.getOrDefault(templateId, 0),
-                        eligible,
-                        productScope.label(allowed)
+                        decision.goodsAmount(),
+                        decision.summary(),
+                        false,
+                        null
                 ));
-            } else {
+            } else if (stock > 0) {
                 groups.put(templateId, current.plusAvailable());
             }
         }
-        return List.copyOf(groups.values());
+        Map<UUID, CouponGroup> gated = new LinkedHashMap<>();
+        groups.forEach((templateId, group) -> gated.put(templateId, gate(decision, selected, selectedDiscount, group)));
+        return List.copyOf(gated.values());
+    }
+
+    public String ruleText(List<Order> lines) {
+        return usageRules.decide(lines).summary();
     }
 
     public String couponSummary(UUID checkoutId) {
@@ -285,8 +289,7 @@ public class CouponService {
     }
 
     public String scopeText(UUID templateId) {
-        if (templateId == null) return "未指定可用商品";
-        return productScope.label(productScope.productIds(templateId));
+        return usageRules.templateHint(templateId);
     }
 
     public List<String> productIds(UUID templateId) {
@@ -331,10 +334,37 @@ public class CouponService {
             int availableCount,
             int selectedCount,
             BigDecimal eligibleAmount,
-            String scopeText
+            String scopeText,
+            boolean canAdd,
+            String blockText
     ) {
         CouponGroup plusAvailable() {
-            return new CouponGroup(templateId, name, thresholdAmount, discountAmount, perOrderLimit, availableCount + 1, selectedCount, eligibleAmount, scopeText);
+            return new CouponGroup(templateId, name, thresholdAmount, discountAmount, perOrderLimit, availableCount + 1, selectedCount, eligibleAmount, scopeText, canAdd, blockText);
         }
+    }
+
+    private CouponGroup gate(CouponUsageRules.Decision decision, Map<UUID, Integer> selected, BigDecimal selectedDiscount, CouponGroup group) {
+        Map<UUID, Integer> next = new LinkedHashMap<>(selected);
+        next.put(group.templateId(), group.selectedCount() + 1);
+        String block = null;
+        if (decision.active().isEmpty()) block = "当前商品没有用券规则";
+        else if (decision.maxOf(group.templateId()) == 0) block = "不在本单规则里";
+        else if (decision.goodsAmount().compareTo(group.thresholdAmount()) < 0) block = "未满整单门槛";
+        else if (group.availableCount() <= group.selectedCount()) block = "没有更多可用券";
+        else if (!decision.fits(next)) block = "当前组合不能再加";
+        else if (decision.goodsAmount().subtract(selectedDiscount.add(group.discountAmount())).signum() <= 0) block = "再加会超过商品金额";
+        return new CouponGroup(
+                group.templateId(),
+                group.name(),
+                group.thresholdAmount(),
+                group.discountAmount(),
+                group.perOrderLimit(),
+                group.availableCount(),
+                group.selectedCount(),
+                group.eligibleAmount(),
+                group.scopeText(),
+                block == null,
+                block
+        );
     }
 }
