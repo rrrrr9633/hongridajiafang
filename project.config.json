@@ -15,11 +15,12 @@
     "minifyWXML": true
   },
   "compileType": "miniprogram",
+  "miniprogramRoot": "miniapp/",
   "simulatorPluginLibVersion": {},
   "packOptions": {
     "ignore": [],
     "include": []
   },
-  "appid": "wx42d328dd4d43cb2b",
+  "appid": "wxa8f2a3d7878469ac",
   "editorSetting": {}
 }
