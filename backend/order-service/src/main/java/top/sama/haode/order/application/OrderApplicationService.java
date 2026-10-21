@@ -291,7 +291,8 @@ public class OrderApplicationService {
     public Order cancelOrder(UUID orderId, String userId) {
         Order order = getOrder(orderId, userId);
         if (order.getCheckoutId() != null) {
-            throw new IllegalStateException("结算单中的商品订单需通过整笔结算单取消");
+            cancelCheckout(order.getCheckoutId(), userId);
+            return orderRepository.findByIdAndUserId(orderId, userId).orElse(order);
         }
         if (order.getStatus() == OrderStatus.CANCELLED) {
             return order;
@@ -342,7 +343,12 @@ public class OrderApplicationService {
     public Order cancelOrderAsAdmin(UUID orderId) {
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new IllegalArgumentException("Order not found: " + orderId));
-        if (order.getCheckoutId() != null) throw new IllegalStateException("结算单中的商品订单需通过结算单取消");
+        if (order.getCheckoutId() != null) {
+            Checkout checkout = checkoutRepository.findById(order.getCheckoutId())
+                    .orElseThrow(() -> new IllegalArgumentException("Checkout not found: " + order.getCheckoutId()));
+            cancelCheckout(checkout.getId(), checkout.getUserId());
+            return orderRepository.findById(orderId).orElse(order);
+        }
         if (order.getStatus() == OrderStatus.CANCELLED) {
             return order;
         }
