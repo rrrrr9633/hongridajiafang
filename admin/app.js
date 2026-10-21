@@ -468,7 +468,7 @@ function renderRuleOptions() {
         <select data-option="${optionIndex}" data-item="${itemIndex}">
           <option value="">选择优惠券</option>${choices}
         </select>
-        <input data-qty="${optionIndex}" data-item="${itemIndex}" type="number" min="1" max="99" value="${item.quantity || 1}">
+        <input data-option="${optionIndex}" data-item="${itemIndex}" type="number" min="1" max="99" value="${item.quantity || 1}">
         <button type="button" class="secondary remove-rule-item" data-option="${optionIndex}" data-item="${itemIndex}">移除</button>
       </div>`).join('')}
       <button type="button" class="secondary add-rule-item" data-option="${optionIndex}">加一种券</button>
@@ -478,8 +478,16 @@ function renderRuleOptions() {
     select.value = ruleDraft.options[select.dataset.option].items[select.dataset.item].templateId || '';
     select.onchange = () => { ruleDraft.options[select.dataset.option].items[select.dataset.item].templateId = select.value; };
   });
-  box.querySelectorAll('input[data-qty]').forEach((input) => {
-    input.onchange = () => { ruleDraft.options[input.dataset.option].items[input.dataset.item].quantity = Number(input.value || 1); };
+  box.querySelectorAll('input[data-option][type="number"]').forEach((input) => {
+    const writeQty = () => {
+      const option = ruleDraft.options[input.dataset.option];
+      if (!option || !option.items[input.dataset.item]) return;
+      const quantity = Math.max(1, Math.min(99, Number(input.value || 1)));
+      option.items[input.dataset.item].quantity = quantity;
+      if (String(input.value) !== String(quantity)) input.value = quantity;
+    };
+    input.onchange = writeQty;
+    input.oninput = writeQty;
   });
   box.querySelectorAll('.add-rule-item').forEach((button) => {
     button.onclick = () => {
@@ -915,6 +923,11 @@ if ($('#coupon-rule-form')) {
     const id = (form.elements.id.value || '').trim();
     const zones = [...document.querySelectorAll('#coupon-rule-scope input[name="ruleZone"]:checked')].map((input) => input.value);
     const productIds = [...document.querySelectorAll('#coupon-rule-scope input[name="ruleProductId"]:checked')].map((input) => input.value);
+    document.querySelectorAll('#coupon-rule-options input[data-option][type="number"]').forEach((input) => {
+      const option = ruleDraft.options[input.dataset.option];
+      if (!option || !option.items[input.dataset.item]) return;
+      option.items[input.dataset.item].quantity = Math.max(1, Math.min(99, Number(input.value || 1)));
+    });
     const options = ruleDraft.options.map((option) => ({
       items: (option.items || []).filter((item) => item.templateId).map((item) => ({ templateId: item.templateId, quantity: Number(item.quantity || 1) })),
     })).filter((option) => option.items.length > 0);
