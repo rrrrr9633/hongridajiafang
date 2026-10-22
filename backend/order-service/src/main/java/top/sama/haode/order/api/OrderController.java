@@ -238,11 +238,13 @@ public class OrderController {
     }
 
     public record OrderResponse(UUID id, String productId, String typeId, String typeName, String title, String subtitle, BigDecimal amount,
-                                String status, Instant createdAt, Integer quantity, UUID checkoutId) {
+                                String status, Instant createdAt, Integer quantity, UUID checkoutId,
+                                String trackingNo, String expressCompany, Instant shippedAt) {
         static OrderResponse from(Order order) {
             return new OrderResponse(order.getId(), order.getProductId(), order.getProductTypeId(), order.getProductTypeName(),
                     order.getProductName(), order.getProductSubtitle(), order.getAmount(), order.getStatus().name(),
-                    order.getCreatedAt(), order.getQuantity(), order.getCheckoutId());
+                    order.getCreatedAt(), order.getQuantity(), order.getCheckoutId(),
+                    order.getTrackingNo(), order.getExpressCompany(), order.getShippedAt());
         }
     }
 }

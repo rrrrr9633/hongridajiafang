@@ -4,6 +4,7 @@ let token = sessionStorage.getItem('haode_admin_token') || '';
 let products = [];
 let reviews = [];
 let draftTypes = [];
+let orderRows = [];
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -344,9 +345,11 @@ async function loadOrders() {
   const status = $('#orders-status') ? $('#orders-status').value : '';
   const data = await request(`/admin/orders${qs({ q, status, page: listState.orders.page, size: PAGE_SIZE })}`);
   const items = data.items || [];
+  orderRows = items;
   $('#orders-table').innerHTML = `<table><thead><tr><th>订单</th><th>商品</th><th>金额</th><th>收货</th><th>状态</th><th>物流</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${items.map((item) => `<tr><td>${escapeHtml(item.id)}</td><td>${escapeHtml(item.title)}</td><td>¥${Number(item.amount).toFixed(2)}</td><td>${escapeHtml(item.receiverLine || '未填地址')}</td><td>${escapeHtml(item.status)}</td><td>${shippingLabel(item)}</td><td>${new Date(item.createdAt).toLocaleString()}</td><td>${orderActions(item)}</td></tr>`).join('') || '<tr><td colspan="8">没有匹配的订单</td></tr>'}</tbody></table>`;
-  document.querySelectorAll('.cancel-order').forEach((button) => button.onclick = async () => { await request(`/admin/orders/${button.dataset.id}/cancel`, { method: 'POST' }); loadOrders(); });
-  document.querySelectorAll('.ship-express').forEach((button) => button.onclick = () => shipExpress(button.dataset.id));
+  document.querySelectorAll('.cancel-order').forEach((button) => button.onclick = () => cancelOrder(button.dataset.id));
+  document.querySelectorAll('.delete-order').forEach((button) => button.onclick = () => deleteOrder(button.dataset.id));
+  document.querySelectorAll('.ship-express').forEach((button) => button.onclick = () => openShipForm(button.dataset.id));
   document.querySelectorAll('.ship-none').forEach((button) => button.onclick = () => shipNone(button.dataset.id));
   renderPager('#orders-pager', listState.orders, data.total || 0, loadOrders);
 }
@@ -361,27 +364,121 @@ function shippingLabel(item) {
 
 function orderActions(item) {
   const actions = [];
-  if (item.status === 'PENDING_PAYMENT') actions.push(`<button class="secondary cancel-order" data-id="${item.id}">取消</button>`);
-  if ((item.status === 'PAID' || item.status === 'PROCESSING') && !item.shippedAt) {
-    actions.push(`<button class="primary ship-express" data-id="${item.id}">填单号</button>`);
-    actions.push(`<button class="secondary ship-none" data-id="${item.id}">无需物流</button>`);
+  if (item.status === 'PENDING_PAYMENT' || item.status === 'CREATED') {
+    actions.push(`<button class="secondary cancel-order" data-id="${item.id}">取消</button>`);
+  }
+  if (item.status === 'PAID' || item.status === 'PROCESSING') {
+    if (item.shippedAt) {
+      actions.push(`<button class="primary ship-express" data-id="${item.id}">改单号</button>`);
+      actions.push(`<button class="secondary ship-none" data-id="${item.id}">改报无需物流</button>`);
+    } else {
+      actions.push(`<button class="primary ship-express" data-id="${item.id}">填单号</button>`);
+      actions.push(`<button class="secondary ship-none" data-id="${item.id}">无需物流</button>`);
+    }
+  }
+  if (item.status === 'PENDING_PAYMENT' || item.status === 'CREATED' || item.status === 'CANCELLED') {
+    actions.push(`<button class="danger delete-order" data-id="${item.id}">删除</button>`);
   }
   return actions.join(' ');
 }
 
-async function shipExpress(id) {
-  const trackingNo = prompt('线下寄出后的物流单号（不对接快递接口，手填即可）');
-  if (trackingNo === null || !trackingNo.trim()) return;
-  const expressCompany = prompt('物流公司编码：SF / YTO / ZTO / YD / STO / JD / EMS', 'SF');
-  if (expressCompany === null || !expressCompany.trim()) return;
-  await request(`/admin/orders/${id}/ship`, { method: 'POST', body: JSON.stringify({ mode: 'EXPRESS', trackingNo: trackingNo.trim(), expressCompany: expressCompany.trim() }) });
-  loadOrders();
+function setPageError(message) {
+  const error = $('#page-error');
+  if (error) error.textContent = message || '';
+}
+
+function findOrder(id) {
+  return orderRows.find((item) => item.id === id);
+}
+
+function openShipForm(id) {
+  const mask = $('#ship-mask');
+  const form = $('#ship-form');
+  const error = $('#ship-error');
+  if (!mask || !form) return;
+  const item = findOrder(id);
+  const correcting = !!(item && item.shippedAt);
+  form.reset();
+  form.elements.orderId.value = id;
+  const company = item && item.expressCompany && item.expressCompany !== 'NONE' ? item.expressCompany : 'SF';
+  form.elements.expressCompany.value = company;
+  form.elements.trackingNo.value = item && item.trackingNo && item.trackingNo !== 'NONE' ? item.trackingNo : '';
+  const title = $('#ship-title');
+  const hint = $('#ship-hint');
+  const submit = $('#ship-submit');
+  if (title) title.textContent = correcting ? '更正物流单号' : '确认发货';
+  if (hint) {
+    hint.textContent = correcting
+      ? '会覆盖本系统里的物流信息，并再次尝试上报微信。微信若已录入成功，可能改不了微信侧，但小程序会显示新单号。'
+      : '选好物流公司、填上真实单号，点确认后才会上报微信。选完物流如果没点确认，货不会发出去。';
+  }
+  if (submit) submit.textContent = correcting ? '更正单号并同步微信' : '确认发货并同步微信';
+  if (error) error.textContent = '';
+  setPageError('');
+  mask.classList.remove('hidden');
+}
+
+function closeShipForm() {
+  const mask = $('#ship-mask');
+  if (mask) mask.classList.add('hidden');
+}
+
+async function submitShip(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const error = $('#ship-error');
+  if (error) error.textContent = '';
+  const orderId = (form.elements.orderId.value || '').trim();
+  const trackingNo = (form.elements.trackingNo.value || '').trim();
+  const expressCompany = (form.elements.expressCompany.value || '').trim();
+  if (!orderId || !trackingNo || !expressCompany) {
+    if (error) error.textContent = '请填写物流公司和单号';
+    return;
+  }
+  try {
+    await request(`/admin/orders/${orderId}/ship`, {
+      method: 'POST',
+      body: JSON.stringify({ mode: 'EXPRESS', trackingNo, expressCompany }),
+    });
+    closeShipForm();
+    setPageError('');
+    loadOrders();
+  } catch (err) {
+    if (error) error.textContent = err.message || '发货上报失败';
+  }
 }
 
 async function shipNone(id) {
-  if (!confirm('按「无需物流」上报微信。不需要开通快递服务，也不需要单号。确定？')) return;
-  await request(`/admin/orders/${id}/ship`, { method: 'POST', body: JSON.stringify({ mode: 'NONE' }) });
-  loadOrders();
+  if (!confirm('按「无需物流」上报微信。床品是实物，不要用微信后台的虚拟发货。确定这单不填快递单号？')) return;
+  try {
+    setPageError('');
+    await request(`/admin/orders/${id}/ship`, { method: 'POST', body: JSON.stringify({ mode: 'NONE' }) });
+    loadOrders();
+  } catch (err) {
+    setPageError(err.message || '发货上报失败');
+  }
+}
+
+async function cancelOrder(id) {
+  if (!confirm('取消后用户不能再付这单。确定取消？')) return;
+  try {
+    setPageError('');
+    await request(`/admin/orders/${id}/cancel`, { method: 'POST' });
+    loadOrders();
+  } catch (err) {
+    setPageError(err.message || '取消失败');
+  }
+}
+
+async function deleteOrder(id) {
+  if (!confirm('删除后不可恢复。已支付订单不能删。确定删除？')) return;
+  try {
+    setPageError('');
+    await request(`/admin/orders/${id}`, { method: 'DELETE' });
+    loadOrders();
+  } catch (err) {
+    setPageError(err.message || '删除失败');
+  }
 }
 
 async function loadAfterSales() {
@@ -618,6 +715,9 @@ $('#login-form').onsubmit = async (event) => { event.preventDefault(); try { con
 document.querySelectorAll('nav button').forEach((button) => button.onclick = () => showSection(button.dataset.section));
 $('#users-search').onclick = () => { listState.users.page = 0; loadUsers(); };
 $('#orders-search').onclick = () => { listState.orders.page = 0; loadOrders(); };
+if ($('#ship-form')) $('#ship-form').onsubmit = submitShip;
+if ($('#cancel-ship')) $('#cancel-ship').onclick = closeShipForm;
+if ($('#ship-mask')) $('#ship-mask').addEventListener('click', (event) => { if (event.target === event.currentTarget) closeShipForm(); });
 $('#reviews-search').onclick = () => { listState.reviews.page = 0; loadReviews(); };
 ['users-q', 'orders-q', 'reviews-q'].forEach((id) => {
   const input = document.getElementById(id);

@@ -17,6 +17,7 @@ import top.sama.haode.order.domain.ReviewStatus;
 import top.sama.haode.order.domain.User;
 import top.sama.haode.order.repository.AfterSaleRepository;
 import top.sama.haode.order.repository.CheckoutRepository;
+import top.sama.haode.order.repository.ReviewImageRepository;
 import top.sama.haode.order.repository.ReviewRepository;
 import top.sama.haode.order.repository.OrderRepository;
 import top.sama.haode.order.repository.PaymentRepository;
@@ -38,6 +39,7 @@ public class OrderApplicationService {
     private final ProductRepository productRepository;
     private final ProductTypeRepository productTypeRepository;
     private final ReviewRepository reviewRepository;
+    private final ReviewImageRepository reviewImageRepository;
     private final AfterSaleRepository afterSaleRepository;
     private final CheckoutRepository checkoutRepository;
     private final CouponService couponService;
@@ -52,6 +54,7 @@ public class OrderApplicationService {
             ProductRepository productRepository,
             ProductTypeRepository productTypeRepository,
             ReviewRepository reviewRepository,
+            ReviewImageRepository reviewImageRepository,
             AfterSaleRepository afterSaleRepository,
             CheckoutRepository checkoutRepository,
             CouponService couponService,
@@ -65,6 +68,7 @@ public class OrderApplicationService {
         this.productRepository = productRepository;
         this.productTypeRepository = productTypeRepository;
         this.reviewRepository = reviewRepository;
+        this.reviewImageRepository = reviewImageRepository;
         this.afterSaleRepository = afterSaleRepository;
         this.checkoutRepository = checkoutRepository;
         this.couponService = couponService;
@@ -357,6 +361,35 @@ public class OrderApplicationService {
         return order;
     }
 
+    @Transactional
+    public void deleteOrderAsAdmin(UUID orderId) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new IllegalArgumentException("Order not found: " + orderId));
+        if (order.getCheckoutId() != null) {
+            Checkout checkout = checkoutRepository.findById(order.getCheckoutId())
+                    .orElseThrow(() -> new IllegalArgumentException("Checkout not found: " + order.getCheckoutId()));
+            if (!canAdminDelete(checkout.getStatus())) {
+                throw new IllegalStateException("已支付或售后订单不能删除，请走售后退款");
+            }
+            couponService.releaseCheckout(checkout);
+            paymentRepository.deleteByCheckoutId(checkout.getId());
+            orderRepository.deleteByCheckoutId(checkout.getId());
+            checkoutRepository.delete(checkout);
+            return;
+        }
+        if (!canAdminDelete(order.getStatus())) {
+            throw new IllegalStateException("已支付或售后订单不能删除，请走售后退款");
+        }
+        paymentRepository.deleteByOrderId(orderId);
+        orderRepository.delete(order);
+    }
+
+    private static boolean canAdminDelete(OrderStatus status) {
+        return status == OrderStatus.CANCELLED
+                || status == OrderStatus.CREATED
+                || status == OrderStatus.PENDING_PAYMENT;
+    }
+
     @Scheduled(fixedDelay = 60000)
     @Transactional
     public void cancelExpiredOrders() {
@@ -514,15 +547,20 @@ public class OrderApplicationService {
         String itemDesc = group.stream().map(Order::getProductName).reduce((a, b) -> a + "、" + b).orElse("红日大家纺");
         Checkout checkout = checkoutId == null ? null : checkoutRepository.findById(checkoutId).orElse(null);
         String phone = checkout == null ? "" : checkout.getReceiverPhone();
-        wechatShippingService.upload(new WechatShippingService.ShippingUpload(
-                payment.getTransactionId(),
-                user.getWechatOpenid(),
-                itemDesc,
-                express ? 1 : 4,
-                express ? tracking : "",
-                company,
-                phone
-        ));
+        boolean correcting = group.stream().anyMatch(item -> item.getShippedAt() != null);
+        try {
+            wechatShippingService.upload(new WechatShippingService.ShippingUpload(
+                    payment.getTransactionId(),
+                    user.getWechatOpenid(),
+                    itemDesc,
+                    express ? 1 : 4,
+                    express ? tracking : "",
+                    company,
+                    phone
+            ));
+        } catch (IllegalStateException exception) {
+            if (!correcting) throw exception;
+        }
         for (Order item : group) {
             item.ship(express ? tracking : "NONE", express ? company : "NONE");
             item.markShippingUploaded();

@@ -112,14 +112,14 @@
         <div id="users-pager" class="pager"></div>
       </section>
       <section id="orders" class="section">
-        <p class="muted">用户在小程序结算页提交收货地址。已支付后在此按地址线下寄出，再点「填单号」或「无需物流」。</p>
+        <p class="muted">发货只在本页完成：线下寄出后点「填单号」，填完物流公司和单号再点「确认发货」。系统会把发货信息上报给微信。单号填错了点「改单号」，未支付或已取消的垃圾单可以取消/删除。已支付订单不能直接删，走售后退款。不要去微信小程序后台的「发货信息录入」，也不要用虚拟发货——床品是实物，虚拟发货永远发不出去。</p>
         <div class="filters">
           <input id="orders-q" placeholder="搜索订单号 / 用户 / 商品">
           <select id="orders-status">
             <option value="">全部状态</option>
             <option value="PENDING_PAYMENT">待支付</option>
-            <option value="PAID">已支付</option>
-            <option value="PROCESSING">备货中</option>
+            <option value="PAID">待发货</option>
+            <option value="PROCESSING">已发货</option>
             <option value="COMPLETED">已完成</option>
             <option value="CANCELLED">已取消</option>
             <option value="REFUNDING">退款中</option>
@@ -129,6 +129,32 @@
         </div>
         <div id="orders-table" class="table-wrap"></div>
         <div id="orders-pager" class="pager"></div>
+        <div id="ship-mask" class="ship-mask hidden">
+          <form id="ship-form" class="ship-card">
+            <input type="hidden" name="orderId">
+            <h2 id="ship-title">确认发货</h2>
+            <p class="muted" id="ship-hint">选好物流公司、填上真实单号，点确认后才会上报微信。选完物流如果没点确认，货不会发出去。</p>
+            <label>物流公司
+              <select name="expressCompany" required>
+                <option value="SF">顺丰 SF</option>
+                <option value="YTO">圆通 YTO</option>
+                <option value="ZTO">中通 ZTO</option>
+                <option value="YD">韵达 YD</option>
+                <option value="STO">申通 STO</option>
+                <option value="JD">京东 JD</option>
+                <option value="EMS">EMS</option>
+                <option value="YZPY">邮政包裹 YZPY</option>
+                <option value="JTSD">极兔 JTSD</option>
+              </select>
+            </label>
+            <label>物流单号<input name="trackingNo" required placeholder="寄出后的快递单号"></label>
+            <p id="ship-error" class="error"></p>
+            <div class="form-actions">
+              <button class="primary" type="submit" id="ship-submit">确认发货并同步微信</button>
+              <button class="secondary" type="button" id="cancel-ship">取消</button>
+            </div>
+          </form>
+        </div>
       </section>
       <section id="after-sales" class="section">
         <p class="muted">同意售后会向微信发起退款；拒绝则把订单恢复为已支付/已发货。</p>
