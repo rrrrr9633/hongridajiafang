@@ -253,6 +253,10 @@ public class OrderApplicationService {
     @Transactional
     public List<Order> listOrders(String userId) {
         List<Order> orders = orderRepository.findByUserIdOrderByCreatedAtDesc(userId);
+        orders.stream()
+                .filter(order -> order.getStatus() == OrderStatus.PENDING_PAYMENT)
+                .forEach(this::confirmOrderFromWechat);
+        orders = orderRepository.findByUserIdOrderByCreatedAtDesc(userId);
         orders.forEach(this::expireIfNeeded);
         return orders;
     }
