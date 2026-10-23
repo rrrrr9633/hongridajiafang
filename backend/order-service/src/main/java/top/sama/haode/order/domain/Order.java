@@ -198,6 +198,15 @@ public class Order {
         updatedAt = this.shippedAt;
     }
 
+    public void complete() {
+        if (status == OrderStatus.COMPLETED) return;
+        if (status != OrderStatus.PROCESSING) {
+            throw new IllegalStateException("只有已发货订单可以完成");
+        }
+        status = OrderStatus.COMPLETED;
+        updatedAt = Instant.now();
+    }
+
     public void markShippingUploaded() {
         this.shippingUploadedAt = Instant.now();
         updatedAt = this.shippingUploadedAt;

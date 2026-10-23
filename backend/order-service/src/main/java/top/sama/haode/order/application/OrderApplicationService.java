@@ -580,6 +580,43 @@ public class OrderApplicationService {
     }
 
     @Transactional
+    public Order completeOrder(UUID orderId, String userId) {
+        return completeShippedOrder(getOrder(orderId, userId));
+    }
+
+    @Transactional
+    public Order completeOrderAsAdmin(UUID orderId) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new IllegalArgumentException("Order not found: " + orderId));
+        return completeShippedOrder(order);
+    }
+
+    private Order completeShippedOrder(Order order) {
+        UUID checkoutId = order.getCheckoutId();
+        List<Order> group = checkoutId == null
+                ? List.of(order)
+                : orderRepository.findByCheckoutIdOrderByCreatedAtAsc(checkoutId);
+        for (Order item : group) {
+            if (item.getStatus() != OrderStatus.PROCESSING && item.getStatus() != OrderStatus.COMPLETED) {
+                throw new IllegalStateException("只有已发货订单可以完成");
+            }
+        }
+        Payment payment = checkoutId != null
+                ? paymentRepository.findByCheckoutId(checkoutId).orElse(null)
+                : paymentRepository.findByOrderId(order.getId()).orElse(null);
+        if (payment != null && payment.getTransactionId() != null && !payment.getTransactionId().isBlank()) {
+            try {
+                wechatShippingService.notifyConfirm(payment.getTransactionId());
+            } catch (IllegalStateException ignored) {
+            }
+        }
+        for (Order item : group) {
+            if (item.getStatus() == OrderStatus.PROCESSING) item.complete();
+        }
+        return order;
+    }
+
+    @Transactional
     public AfterSale approveAfterSale(UUID afterSaleId) {
         AfterSale afterSale = afterSaleRepository.findById(afterSaleId)
                 .orElseThrow(() -> new IllegalArgumentException("售后单不存在"));

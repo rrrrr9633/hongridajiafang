@@ -7,6 +7,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
 import java.time.OffsetDateTime;
+import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
@@ -55,6 +56,33 @@ public class WechatShippingService {
             throw exception;
         } catch (Exception exception) {
             throw new IllegalStateException("微信发货上报失败：" + exception.getMessage(), exception);
+        }
+    }
+
+    public void notifyConfirm(String transactionId) {
+        if (transactionId == null || transactionId.isBlank()) return;
+        try {
+            String token = wechatAuthService.accessToken();
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("transaction_id", transactionId);
+            body.put("received_time", Instant.now().getEpochSecond());
+            String json = objectMapper.writeValueAsString(body);
+            String response = restClient.post()
+                    .uri("https://api.weixin.qq.com/wxa/sec/order/notify_confirm_receive?access_token={token}", token)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(json)
+                    .retrieve()
+                    .body(String.class);
+            JsonNode node = objectMapper.readTree(response == null ? "{}" : response);
+            int errcode = node.path("errcode").asInt(0);
+            String errmsg = node.path("errmsg").asText("");
+            if (errcode != 0 && !errmsg.contains("已确认") && !errmsg.contains("repeat") && !errmsg.contains("已收货")) {
+                throw new IllegalStateException("微信确认收货失败：" + (errmsg.isBlank() ? "未知错误" : errmsg));
+            }
+        } catch (IllegalStateException exception) {
+            throw exception;
+        } catch (Exception exception) {
+            throw new IllegalStateException("微信确认收货失败：" + exception.getMessage(), exception);
         }
     }
 

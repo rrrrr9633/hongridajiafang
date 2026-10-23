@@ -48,6 +48,17 @@ public class AdminOrderController {
         }
     }
 
+    @PostMapping("/{orderId}/complete")
+    public OrderResponse complete(@PathVariable UUID orderId) {
+        try {
+            return OrderResponse.from(orderService.completeOrderAsAdmin(orderId));
+        } catch (IllegalArgumentException exception) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, exception.getMessage(), exception);
+        } catch (IllegalStateException exception) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, exception.getMessage(), exception);
+        }
+    }
+
     @PostMapping("/{orderId}/ship")
     public OrderResponse ship(@PathVariable UUID orderId, @Valid @RequestBody ShipRequest request) {
         try {

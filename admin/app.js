@@ -346,12 +346,26 @@ async function loadOrders() {
   const data = await request(`/admin/orders${qs({ q, status, page: listState.orders.page, size: PAGE_SIZE })}`);
   const items = data.items || [];
   orderRows = items;
-  $('#orders-table').innerHTML = `<table><thead><tr><th>订单</th><th>商品</th><th>金额</th><th>收货</th><th>状态</th><th>物流</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${items.map((item) => `<tr><td>${escapeHtml(item.id)}</td><td>${escapeHtml(item.title)}</td><td>¥${Number(item.amount).toFixed(2)}</td><td>${escapeHtml(item.receiverLine || '未填地址')}</td><td>${escapeHtml(item.status)}</td><td>${shippingLabel(item)}</td><td>${new Date(item.createdAt).toLocaleString()}</td><td>${orderActions(item)}</td></tr>`).join('') || '<tr><td colspan="8">没有匹配的订单</td></tr>'}</tbody></table>`;
+  $('#orders-table').innerHTML = `<table><thead><tr><th>订单</th><th>商品</th><th>金额</th><th>收货</th><th>状态</th><th>物流</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${items.map((item) => `<tr><td>${escapeHtml(item.id)}</td><td>${escapeHtml(item.title)}</td><td>¥${Number(item.amount).toFixed(2)}</td><td>${escapeHtml(item.receiverLine || '未填地址')}</td><td>${escapeHtml(statusLabel(item.status))}</td><td>${shippingLabel(item)}</td><td>${new Date(item.createdAt).toLocaleString()}</td><td>${orderActions(item)}</td></tr>`).join('') || '<tr><td colspan="8">没有匹配的订单</td></tr>'}</tbody></table>`;
   document.querySelectorAll('.cancel-order').forEach((button) => button.onclick = () => cancelOrder(button.dataset.id));
   document.querySelectorAll('.delete-order').forEach((button) => button.onclick = () => deleteOrder(button.dataset.id));
+  document.querySelectorAll('.complete-order').forEach((button) => button.onclick = () => completeOrder(button.dataset.id));
   document.querySelectorAll('.ship-express').forEach((button) => button.onclick = () => openShipForm(button.dataset.id));
   document.querySelectorAll('.ship-none').forEach((button) => button.onclick = () => shipNone(button.dataset.id));
   renderPager('#orders-pager', listState.orders, data.total || 0, loadOrders);
+}
+
+function statusLabel(status) {
+  return ({
+    CREATED: '待处理',
+    PENDING_PAYMENT: '待支付',
+    PAID: '待发货',
+    PROCESSING: '已发货',
+    COMPLETED: '已完成',
+    CANCELLED: '已取消',
+    REFUNDING: '退款中',
+    REFUNDED: '已退款',
+  })[status] || status;
 }
 
 function shippingLabel(item) {
@@ -369,6 +383,7 @@ function orderActions(item) {
   }
   if (item.status === 'PAID' || item.status === 'PROCESSING') {
     if (item.shippedAt) {
+      actions.push(`<button class="primary complete-order" data-id="${item.id}">完成订单</button>`);
       actions.push(`<button class="primary ship-express" data-id="${item.id}">改单号</button>`);
       actions.push(`<button class="secondary ship-none" data-id="${item.id}">改报无需物流</button>`);
     } else {
@@ -379,7 +394,7 @@ function orderActions(item) {
   if (item.status === 'PENDING_PAYMENT' || item.status === 'CREATED' || item.status === 'CANCELLED') {
     actions.push(`<button class="danger delete-order" data-id="${item.id}">删除</button>`);
   }
-  return actions.join(' ');
+  return `<div class="order-ops">${actions.join('')}</div>`;
 }
 
 function setPageError(message) {
@@ -456,6 +471,17 @@ async function shipNone(id) {
     loadOrders();
   } catch (err) {
     setPageError(err.message || '发货上报失败');
+  }
+}
+
+async function completeOrder(id) {
+  if (!confirm('用户已收到货？完成后订单变为已完成，可以评价。')) return;
+  try {
+    setPageError('');
+    await request(`/admin/orders/${id}/complete`, { method: 'POST' });
+    loadOrders();
+  } catch (err) {
+    setPageError(err.message || '完成失败');
   }
 }
 

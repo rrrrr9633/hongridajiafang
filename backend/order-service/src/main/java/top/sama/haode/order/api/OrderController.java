@@ -125,6 +125,17 @@ public class OrderController {
         }
     }
 
+    @PostMapping("/{orderId}/complete")
+    public OrderResponse complete(@RequestAttribute("userId") String userId, @PathVariable UUID orderId) {
+        try {
+            return OrderResponse.from(applicationService.completeOrder(orderId, userId));
+        } catch (IllegalArgumentException exception) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, exception.getMessage(), exception);
+        } catch (IllegalStateException exception) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, exception.getMessage(), exception);
+        }
+    }
+
     @DeleteMapping("/{orderId}")
     public void delete(@RequestAttribute("userId") String userId, @PathVariable UUID orderId) {
         try {

@@ -51,3 +51,56 @@ mvn -f backend/gateway/pom.xml -Dmaven.repo.local=.runtime/m2 spring-boot:run
 cd /Users/chenhaoran/Desktop/product/haode
 set -a && source .env && set +a
 mvn -f backend/order-service/pom.xml -Dmaven.repo.local=.runtime/m2 spring-boot:run
+
+
+## 云端部署
+  本次需要的完整部署指令已保存为部署脚本 (.runtime/redeploy-20261023.sh)，包含迁
+  移兼容检查、备份、替换 JAR、按顺序启动、健康检查和失败自动恢复旧 JAR。以后在这
+  台服务器上按下面顺序执行即可；以 root 执行。
+
+  # 1. 进入项目，拉取更新（你本次已经执行过）
+  cd /root/hongridajiafang
+  git pull --ff-only
+
+  # 2. 编译、运行测试、打包两个后端服务
+  # -o 使用本机缓存；如果更新引入了未缓存依赖，去掉 -o
+  mvn -o -f backend/pom.xml \
+    -Dmaven.repo.local=/root/.m2/repository \
+    clean verify
+
+  # 3. 执行部署：先备份，再替换和重启，失败时恢复旧 JAR
+  bash .runtime/redeploy-20261023.sh
+
+  查看脚本中的全部底层指令：
+
+  cat /root/hongridajiafang/.runtime/redeploy-20261023.sh
+
+  部署后检查和排查日志的指令：
+
+  # 服务运行状态和开机启动状态
+  systemctl status haode-order-service haode-gateway --no-pager
+  systemctl is-enabled haode-order-service haode-gateway
+
+  # 本机健康检查
+  curl --noproxy '*' -fsS http://127.0.0.1:8081/actuator/health
+  curl --noproxy '*' -fsS http://127.0.0.1:8080/actuator/health
+
+  # 公网 HTTPS 接口检查
+  curl --noproxy '*' -i https://hongridajiafang.shop/api/products
+
+  # 最近的服务日志
+  journalctl -u haode-order-service -n 100 --no-pager
+  journalctl -u haode-gateway -n 100 --no-pager
+
+  # 持续跟踪两个服务日志，Ctrl+C 退出
+  journalctl -u haode-order-service -u haode-gateway -f
+
+  # 本次构建和部署记录
+  cat .runtime/build-20261023.log
+  cat .runtime/deploy-20261023.log
+
+  # 最近一次部署备份位置
+  cat .runtime/last-backend-backup-path
+
+  现有 /etc/haode.env 由 systemd 自动加载，部署时不需要手动 source。本次已验证服
+  务和接口可用；真实微信支付状态同步仍需用实际订单验证。
